@@ -147,3 +147,8 @@ dist
 
 # Backup directories
 .backup/
+
+# Test files
+TEST_RESULTS.md
+INTERACTIVE_TESTING.md
+comprehensive-test.js
