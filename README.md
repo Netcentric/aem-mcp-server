@@ -73,6 +73,7 @@ aem-mcp -u=user@domain.com -p=mypass -H=https://author-qa.domain.com
 - **Replication & Rollout**: Publish/unpublish content, roll out changes to language copies
 - **Text & Image Extraction**: Extract all text and images from pages, including fragments
 - **Template & Structure Discovery**: List templates, analyze page/component structure
+- **Workflow and Inbox Operations**: Manage workflow operation like List, start, advance workflow stages
 - **JCR Node Access**: Legacy and modern node/content access
 - **AI/LLM Integration**: Natural language interface for AEM via OpenAI, Anthropic, Ollama, or custom LLMs
 - **Security**: Auth, environment-based config, and safe operation defaults
