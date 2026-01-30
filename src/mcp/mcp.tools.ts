@@ -83,19 +83,6 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'replicateAndPublish',
-    description: 'Replicate and publish content to selected locales',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        selectedLocales: { type: 'array', items: { type: 'string' } },
-        componentData: { type: 'object' },
-        localizedOverrides: { type: 'object' },
-      },
-      required: ['selectedLocales', 'componentData'],
-    },
-  },
-  {
     name: 'getAllTextContent',
     description: 'Get all text content from a page including titles, text components, and descriptions',
     inputSchema: {
@@ -217,15 +204,6 @@ export const tools: ToolDefinition[] = [
       type: 'object',
       properties: { assetPath: { type: 'string' } },
       required: ['assetPath'],
-    },
-  },
-  {
-    name: 'getStatus',
-    description: 'Get workflow status by ID',
-    inputSchema: {
-      type: 'object',
-      properties: { workflowId: { type: 'string' } },
-      required: ['workflowId'],
     },
   },
   {
