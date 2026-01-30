@@ -1,8 +1,5 @@
 # AEM MCP Server (aem-mcp-server)
 
-[![Version](https://img.shields.io/npm/v/aem-mcp-server.svg)](https://npmjs.org/package/aem-mcp-server)
-[![Release Status](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml/badge.svg)](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml)
-[![CodeQL Analysis](https://github.com/easingthemes/aem-mcp-server/workflows/CodeQL/badge.svg?branch=main)](https://github.com/easingthemes/aem-mcp-server/actions)
 [![semver: semantic-release](https://img.shields.io/badge/semver-semantic--release-blue.svg)](https://github.com/semantic-release/semantic-release)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
