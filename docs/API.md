@@ -38,7 +38,6 @@
 | `fetchSites` | Get all available sites | - |
 | `fetchLanguageMasters` | Get language masters for a site | `site` |
 | `fetchAvailableLocales` | Get available locales | `site`, `languageMasterPath` |
-| `replicateAndPublish` | Replicate and publish to locales | `selectedLocales[]`, `componentData`, `localizedOverrides` |
 
 ## Assets
 
