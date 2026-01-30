@@ -26,14 +26,9 @@ This project is designed for non-technical persons who want to manage AEM via na
 - Access to an AEM instance (local or remote)
 
 ### Installation
-```sh
-npm install aem-mcp-server -g
-```
 
-### Start the Server
-With default settings (admin:admin credentials for http://localhost:4502):
 ```sh
-aem-mcp
+npm run build && npm run start
 ```
 
 ### Configuration
