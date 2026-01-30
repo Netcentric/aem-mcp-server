@@ -43,7 +43,7 @@ export class MCPRequestHandler {
         case 'fetchLanguageMasters':
           return await this.aemConnector.fetchLanguageMasters(params.site);
         case 'fetchAvailableLocales':
-          return await this.aemConnector.fetchAvailableLocales(params.site, params.languageMasterPath);
+          return await this.aemConnector.fetchAvailableLocales(params.site);
         case 'getAllTextContent':
           return await this.aemConnector.getAllTextContent(params.pagePath);
         case 'getPageTextContent':

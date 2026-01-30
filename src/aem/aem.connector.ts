@@ -459,25 +459,60 @@ export class AEMConnector {
     }, 'fetchLanguageMasters');
   }
 
-  async fetchAvailableLocales(site: string, languageMasterPath: string): Promise<object> {
+  async fetchAvailableLocales(site: string): Promise<object> {
     return safeExecute<object>(async () => {
-      const url = `${languageMasterPath}.2.json`;
+      const url = `/content/${site}.4.json`;
       const data = await this.fetch.get(url);
-      const locales: any[] = [];
-      Object.entries(data).forEach(([key, value]: [string, any]) => {
-        if (key.startsWith('jcr:') || key.startsWith('sling:')) return;
-        if (value && typeof value === 'object') {
-          locales.push({
-            name: key,
-            title: value['jcr:content']?.['jcr:title'] || key,
-            language: value['jcr:content']?.['jcr:language'] || key,
-          });
-        }
-      });
+      const locales: Record<string, { path: string; title: string; language?: string; country?: string }> = {};
+      
+      const findLocales = (node: any, currentPath: string, pathSegments: string[] = []) => {
+        if (!node || typeof node !== 'object') return;
+        
+        Object.entries(node).forEach(([key, value]: [string, any]) => {
+          if (key.startsWith('jcr:') || key.startsWith('sling:') || 
+              key.startsWith('cq:') || key.startsWith('rep:') || 
+              key.startsWith('oak:') || key === 'jcr:content') {
+            return;
+          }
+          
+          if (value && typeof value === 'object') {
+            const childPath = `${currentPath}/${key}`;
+            const newSegments = [...pathSegments, key];
+            
+            
+            const jcrContent = value['jcr:content'];
+            const hasContent = jcrContent && typeof jcrContent === 'object';
+            const language = jcrContent?.['jcr:language'] || null;
+            
+            const isLanguageCode = key.length === 2 || key.length === 3;
+            const parentIsCountryCode = pathSegments.length > 0 && 
+                                       (pathSegments[pathSegments.length - 1].length === 2 || 
+                                        pathSegments[pathSegments.length - 1].length === 3);
+            
+            if (hasContent && isLanguageCode && parentIsCountryCode) {
+              const country = pathSegments[pathSegments.length - 1].toUpperCase();
+              const lang = key.toLowerCase();
+              const localeKey = `${lang}_${country}`;
+
+              locales[localeKey] = {
+                path: childPath,
+                title: jcrContent?.['jcr:title'] || key,
+                language: language || `${lang}_${country}`,
+                country: country,
+              };
+            }
+            
+            findLocales(value, childPath, newSegments);
+          }
+        });
+      };
+      
+      findLocales(data, `/content/${site}`, []);
+      
       return createSuccessResponse({
         site,
-        languageMasterPath,
-        availableLocales: locales,
+        locales,
+        totalCount: Object.keys(locales).length,
       }, 'fetchAvailableLocales');
     }, 'fetchAvailableLocales');
   }

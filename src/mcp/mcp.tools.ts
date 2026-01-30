@@ -72,14 +72,13 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'fetchAvailableLocales',
-    description: 'Get available locales for a site and language master',
+    description: 'Get available locales for a site',
     inputSchema: {
       type: 'object',
       properties: {
         site: { type: 'string' },
-        languageMasterPath: { type: 'string' },
       },
-      required: ['site', 'languageMasterPath'],
+      required: ['site'],
     },
   },
   {
