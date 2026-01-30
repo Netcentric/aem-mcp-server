@@ -24,7 +24,7 @@
 | `getPageProperties` | Get page properties | `pagePath` |
 | `getPageContent` | Get all page content (XF, CF) | `pagePath` |
 | `getAllTextContent` | Get all text content from page | `pagePath` |
-| `getPageTextContent` | Get text content from page | `pagePath` |
+| `getPageTextContent` | Get text content from page. May need fine-tunning for the specific project needs. | `pagePath` |
 | `getPageImages` | Get all images from page | `pagePath` |
 | `enhancedPageSearch` | Intelligent page search with fallbacks | `searchTerm`, `basePath`, `includeAlternateLocales` |
 | `activatePage` | Publish a page | `pagePath`, `activateTree` |
