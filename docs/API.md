@@ -36,7 +36,7 @@
 | Method | Description | Parameters |
 |--------|-------------|------------|
 | `fetchSites` | Get all available sites | - |
-| `fetchLanguageMasters` | Get language masters for a site | `site` |
+| `fetchLanguageMasters` | Get language masters for a site. Considers "master" and "language-masters" under tenant | `site` |
 | `fetchAvailableLocales` | Get available locales | `site`, `languageMasterPath` |
 
 ## Assets

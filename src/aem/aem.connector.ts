@@ -418,14 +418,40 @@ export class AEMConnector {
   async fetchLanguageMasters(site: string): Promise<object> {
     return safeExecute<object>(async () => {
       const url = `/content/${site}.2.json`;
-      const data = await this.fetch.get(url, { ':depth': '3' });
+      const data = await this.fetch.get(url);
       const masters: any[] = [];
+
+      let masterNode: any = null;
+      let masterPath: string = '';
+      
       Object.entries(data).forEach(([key, value]: [string, any]) => {
-        if (key.startsWith('jcr:') || key.startsWith('sling:')) return;
-        if (value && typeof value === 'object' && value['jcr:content']) {
-          // Only include nodes named 'master', 'language-masters', or with jcr:language property
+        if ((key === 'master' || key === 'language-masters') && value && typeof value === 'object') {
+          masterNode = value;
+          masterPath = `/content/${site}/${key}`;
         }
       });
+      
+      if (!masterNode) {
+        return createSuccessResponse({
+          site,
+          languageMasters: [],
+          message: 'No master or language-masters node found'
+        }, 'fetchLanguageMasters');
+      }
+      
+      // Get locales under master/language-masters
+      Object.entries(masterNode).forEach(([key, value]: [string, any]) => {
+        if (key.startsWith('jcr:') || key.startsWith('sling:')) return;
+        if (value && typeof value === 'object') {
+          masters.push({
+            name: key,
+            path: `${masterPath}/${key}`,
+            title: value['jcr:content']?.['jcr:title'] || value['jcr:title'] || key,
+            language: value['jcr:content']?.['jcr:language'] || value['jcr:language'] || key,
+          });
+        }
+      });
+      
       return createSuccessResponse({
         site,
         languageMasters: masters,
@@ -435,8 +461,8 @@ export class AEMConnector {
 
   async fetchAvailableLocales(site: string, languageMasterPath: string): Promise<object> {
     return safeExecute<object>(async () => {
-      const url = `${languageMasterPath}.json`;
-      const data = await this.fetch.get(url, { ':depth': '2' });
+      const url = `${languageMasterPath}.2.json`;
+      const data = await this.fetch.get(url);
       const locales: any[] = [];
       Object.entries(data).forEach(([key, value]: [string, any]) => {
         if (key.startsWith('jcr:') || key.startsWith('sling:')) return;
