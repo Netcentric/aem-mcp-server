@@ -456,18 +456,6 @@ export class AEMConnector {
     }, 'fetchAvailableLocales');
   }
 
-  async replicateAndPublish(selectedLocales: any, componentData: any, localizedOverrides: any): Promise<object> {
-    // Simulate replication logic for now
-    return safeExecute<object>(async () => {
-      return createSuccessResponse({
-        message: 'Replication simulated',
-        selectedLocales,
-        componentData,
-        localizedOverrides,
-      }, 'replicateAndPublish');
-    }, 'replicateAndPublish');
-  }
-
   async getAllTextContent(pagePath: string): Promise<object> {
     return safeExecute<object>(async () => {
       let data: any;

@@ -44,8 +44,6 @@ export class MCPRequestHandler {
           return await this.aemConnector.fetchLanguageMasters(params.site);
         case 'fetchAvailableLocales':
           return await this.aemConnector.fetchAvailableLocales(params.site, params.languageMasterPath);
-        case 'replicateAndPublish':
-          return await this.aemConnector.replicateAndPublish(params.selectedLocales, params.componentData, params.localizedOverrides);
         case 'getAllTextContent':
           return await this.aemConnector.getAllTextContent(params.pagePath);
         case 'getPageTextContent':
@@ -70,8 +68,6 @@ export class MCPRequestHandler {
           return await this.aemConnector.executeJCRQuery(params.query, params.limit);
         case 'getAssetMetadata':
           return await this.aemConnector.getAssetMetadata(params.assetPath);
-        case 'getStatus':
-          return this.getWorkflowStatus(params.workflowId);
         case 'enhancedPageSearch':
           return await this.aemConnector.searchContent({
             fulltext: params.searchTerm,
@@ -137,15 +133,5 @@ export class MCPRequestHandler {
     } catch (error: any) {
       return { error: error.message, method, params };
     }
-  }
-
-  getWorkflowStatus(workflowId: string) {
-    return {
-      success: true,
-      workflowId: workflowId,
-      status: 'completed',
-      message: 'Mock workflow status - always returns completed',
-      timestamp: new Date().toISOString()
-    };
   }
 }

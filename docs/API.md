@@ -130,8 +130,6 @@ completeWorkItem({
 |--------|-------------|------------|
 | `getNodeContent` | Get JCR node content (legacy) | `path`, `depth` |
 | `listChildren` | List child nodes (legacy) | `path` |
-| `getStatus` | Get workflow status | `workflowId` |
-| `listMethods` | Get list of available methods | - |
 
 ## Bulk Operations
 
