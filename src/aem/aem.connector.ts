@@ -1747,12 +1747,15 @@ export class AEMConnector {
         const formData = new URLSearchParams();
         formData.append('cmd', 'Activate');
         formData.append('path', pagePath);
-        formData.append('ignoredeactivated', 'false');
-        formData.append('onlymodified', 'false');
+        let data;
         if (activateTree) {
+          formData.append('ignoredeactivated', 'false');
+          formData.append('onlymodified', 'false');
           formData.append('deep', 'true');
+          data = await this.fetch.post('/libs/replication/treeactivation.html', formData);
+        } else {
+          data = await this.fetch.post('/bin/replicate.json', formData);
         }
-        const data = await this.fetch.post('/bin/replicate.json', formData);
         return createSuccessResponse({
           success: true,
           activatedPath: pagePath,
