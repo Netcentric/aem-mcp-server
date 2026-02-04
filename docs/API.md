@@ -67,7 +67,7 @@
 | Method | Description | Parameters |
 |--------|-------------|------------|
 | `searchContent` | Search using Query Builder | `type`, `fulltext`, `path`, `limit` |
-| `executeJCRQuery` | Execute JCR query | `query`, `limit` |
+| `executeJCRQuery` | Currently it's essentially a wrapper for Query Builder, with the path "/content" and type cq:Page. Note: `query` is a fulltext search term and not a JCR Query | `query`, `limit` |
 
 ## Workflows
 
