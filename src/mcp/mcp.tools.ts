@@ -9,20 +9,6 @@ type ToolDefinition = {
 
 export const tools: ToolDefinition[] = [
   {
-    name: 'validateComponent',
-    description: 'Validate component changes before applying them',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        locale: { type: 'string' },
-        pagePath: { type: 'string' },
-        component: { type: 'string' },
-        props: { type: 'object' },
-      },
-      required: ['locale', 'pagePath', 'component', 'props'],
-    },
-  },
-  {
     name: 'updateComponent',
     description: 'Update component properties in AEM',
     inputSchema: {

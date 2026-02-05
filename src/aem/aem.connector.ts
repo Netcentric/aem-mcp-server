@@ -1,5 +1,5 @@
 import { AEMConfig, getAEMConfig, isValidContentPath, isValidLocale } from './aem.config.js';
-import { AEM_ERROR_CODES, createAEMError, createSuccessResponse, handleAEMHttpError, safeExecute, validateComponentOperation } from './aem.errors.js';
+import { AEM_ERROR_CODES, createAEMError, createSuccessResponse, handleAEMHttpError, safeExecute } from './aem.errors.js';
 import { CliParams } from '../types.js';
 import { AEMAuth, AEMFetch } from './aem.fetch.js';
 import { LOGGER } from '../utils/logger.js';
@@ -180,36 +180,6 @@ export class AEMConnector {
       LOGGER.error('❌ AEM authentication connection failed:', error.message);
       return false;
     }
-  }
-
-  async validateComponent(request: any): Promise<object> {
-    return safeExecute<object>(async () => {
-      const pagePath = request.pagePath || request.page_path;
-      const { locale, component, props } = request;
-      validateComponentOperation(locale, pagePath, component, props);
-      if (!isValidLocale(locale, this.aemConfig)) {
-        throw createAEMError(AEM_ERROR_CODES.INVALID_LOCALE, `Locale '${locale}' is not supported`, { locale, allowedLocales: this.aemConfig.validation.allowedLocales });
-      }
-      if (!isValidContentPath(pagePath, this.aemConfig)) {
-        throw createAEMError(AEM_ERROR_CODES.INVALID_PATH, `Path '${pagePath}' is not within allowed content roots`, { path: pagePath, allowedRoots: Object.values(this.aemConfig.contentPaths) });
-      }
-      const url = `${pagePath}.json`;
-      const response = await this.fetch.get(url, {
-        params: { ':depth': '2' },
-        timeout: this.aemConfig.queries.timeoutMs,
-      });
-      const validation = this.validateComponentProps(response.data, component, props);
-      return createSuccessResponse({
-        message: 'Component validation completed successfully',
-        pageData: response.data,
-        component,
-        locale,
-        validation,
-        configUsed: {
-          allowedLocales: this.aemConfig.validation.allowedLocales,
-        },
-      }, 'validateComponent');
-    }, 'validateComponent');
   }
 
   validateComponentProps(pageData: any, componentType: string, props: any) {

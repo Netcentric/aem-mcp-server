@@ -122,27 +122,6 @@ export async function safeExecute<T>(operation: () => Promise<T>, operationName:
   throw lastError;
 }
 
-export function validateComponentOperation(locale: string, pagePath: string, component: string, props: any): void {
-  const errors: string[] = [];
-  if (!locale || typeof locale !== 'string') {
-    errors.push('Locale is required and must be a string');
-  }
-  if (!pagePath || typeof pagePath !== 'string') {
-    errors.push('Page path is required and must be a string');
-  } else if (!pagePath.startsWith('/content')) {
-    errors.push('Page path must start with /content');
-  }
-  if (!component || typeof component !== 'string') {
-    errors.push('Component type is required and must be a string');
-  }
-  if (!props || typeof props !== 'object') {
-    errors.push('Component properties are required and must be an object');
-  }
-  if (errors.length > 0) {
-    throw createAEMError(AEM_ERROR_CODES.INVALID_PARAMETERS, 'Invalid component operation parameters', { errors });
-  }
-}
-
 export function createSuccessResponse<T>(data: T, operation: string) {
   return {
     success: true,

@@ -30,8 +30,6 @@ export class MCPRequestHandler {
     }
     try {
       switch (method) {
-        case 'validateComponent':
-          return await this.aemConnector.validateComponent(params);
         case 'updateComponent':
           return await this.aemConnector.updateComponent(params);
         case 'scanPageComponents':

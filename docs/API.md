@@ -4,7 +4,6 @@
 
 | Method | Description | Parameters |
 |--------|------------|------------|
-| `validateComponent` | Validate component changes before applying | `locale`, `page_path`, `component`, `props` |
 | `updateComponent` | Update component properties. Validates properties against component dialog definitions (dropdown options, checkbox values, etc.). | `componentPath`, `properties` |
 | `bulkUpdateComponents` | Update multiple components with validation | `updates[]`, `validateFirst`, `continueOnError` |
 | `scanPageComponents` | Discover all components on a page | `pagePath` |
