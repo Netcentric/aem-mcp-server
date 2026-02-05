@@ -34,8 +34,6 @@ export class MCPRequestHandler {
           return await this.aemConnector.validateComponent(params);
         case 'updateComponent':
           return await this.aemConnector.updateComponent(params);
-        case 'undoChanges':
-          return await this.aemConnector.undoChanges(params);
         case 'scanPageComponents':
           return await this.aemConnector.scanPageComponents(params.pagePath);
         case 'fetchSites':

@@ -3,16 +3,15 @@
 ## Component Operations
 
 | Method | Description | Parameters |
-|--------|-------------|------------|
+|--------|------------|------------|
 | `validateComponent` | Validate component changes before applying | `locale`, `page_path`, `component`, `props` |
 | `updateComponent` | Update component properties. Validates properties against component dialog definitions (dropdown options, checkbox values, etc.). | `componentPath`, `properties` |
 | `bulkUpdateComponents` | Update multiple components with validation | `updates[]`, `validateFirst`, `continueOnError` |
 | `scanPageComponents` | Discover all components on a page | `pagePath` |
 | `addComponent` | Add component to a page. Automatically applies `cq:template` structure if available. Validates properties against component dialog definitions. | `pagePath`, `resourceType`, `containerPath`, `name`, `properties` |
 | `deleteComponent` | Delete a component | `componentPath`, `force` |
-| `convertComponents` | Convert components on a single page | `pagePath`, `sourceResourceType`, `targetResourceType`, `requiredProperties`, `continueOnError` |
+| `convertComponents` | Convert components on a single page. Existing components are deleted and new are created. Properties are not preserved. | `pagePath`, `sourceResourceType`, `targetResourceType`, `requiredProperties`, `continueOnError` |
 | `bulkConvertComponents` | Convert components across multiple pages | `sourceResourceType`, `targetResourceType`, `pagePaths[]` or `searchPath`, `depth`, `limit`, `requiredProperties`, `continueOnError` |
-| `undoChanges` | Undo last component changes | `jobId` |
 
 ## Page Operations
 

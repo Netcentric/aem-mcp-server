@@ -35,17 +35,6 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'undoChanges',
-    description: 'Undo the last component changes',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jobId: { type: 'string' },
-      },
-      required: ['jobId'],
-    },
-  },
-  {
     name: 'scanPageComponents',
     description: 'Scan a page to discover all components and their properties',
     inputSchema: {

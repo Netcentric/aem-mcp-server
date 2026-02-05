@@ -347,15 +347,6 @@ export class AEMConnector {
     }, 'updateComponent');
   }
 
-  async undoChanges(request: any): Promise<object> {
-    // Not implemented: AEM MCP does not support undo/rollback. Use AEM version history.
-    return createSuccessResponse({
-      message: 'undoChanges is not implemented. Please use AEM version history for undo/rollback.',
-      request,
-      timestamp: new Date().toISOString(),
-    }, 'undoChanges');
-  }
-
   async scanPageComponents(pagePath: string): Promise<object> {
     return safeExecute<object>(async () => {
       const url = `${pagePath}.infinity.json`;
