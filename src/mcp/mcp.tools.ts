@@ -325,21 +325,6 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'uploadAsset',
-    description: 'Upload a new asset to AEM DAM',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        parentPath: { type: 'string' },
-        fileName: { type: 'string' },
-        fileContent: { type: 'string' },
-        mimeType: { type: 'string' },
-        metadata: { type: 'object' },
-      },
-      required: ['parentPath', 'fileName', 'fileContent'],
-    },
-  },
-  {
     name: 'updateAsset',
     description: 'Update an existing asset in AEM DAM',
     inputSchema: {

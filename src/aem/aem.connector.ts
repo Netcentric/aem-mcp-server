@@ -1406,14 +1406,18 @@ export class AEMConnector {
         throw handleAEMHttpError(error, 'addComponent');
       }
 
-      // Determine container path
+      // Determine container path 
       let targetContainerPath: string;
       if (containerPath) {
         // Use provided container path (can be relative or absolute)
         if (containerPath.startsWith('/')) {
           targetContainerPath = containerPath;
         } else {
-          targetContainerPath = `${pagePath}/jcr:content/${containerPath}`;
+          if (containerPath.includes('jcr:content')) {
+            targetContainerPath = `${pagePath}/${containerPath}`;
+          } else {
+            targetContainerPath = `${pagePath}/jcr:content/${containerPath}`;
+          }
         }
       } else {
         // Try to find the default container (root/container)
@@ -1891,76 +1895,6 @@ export class AEMConnector {
         }
       }
     }, 'deactivatePage');
-  }
-
-  async uploadAsset(request: any): Promise<object> {
-    return safeExecute<object>(async () => {
-      const { parentPath, fileName, fileContent, mimeType, metadata = {} } = request;
-      if (!isValidContentPath(parentPath, this.aemConfig)) {
-        throw createAEMError(AEM_ERROR_CODES.INVALID_PARAMETERS, `Invalid parent path: ${String(parentPath)}`, { parentPath });
-      }
-      const assetPath = `${parentPath}/${fileName}`;
-      try {
-        // Use proper AEM DAM asset upload via Sling POST servlet
-        const formData = new URLSearchParams();
-        // Set the file content (base64 or binary)
-        if (typeof fileContent === 'string') {
-          // Assume base64 encoded content
-          formData.append('file', fileContent);
-        } else {
-          formData.append('file', fileContent.toString());
-        }
-        // Set required Sling POST parameters for asset creation
-        formData.append('fileName', fileName);
-        formData.append(':operation', 'import');
-        formData.append(':contentType', 'json');
-        formData.append(':replace', 'true');
-        formData.append('jcr:primaryType', 'dam:Asset');
-        if (mimeType) {
-          formData.append('jcr:content/jcr:mimeType', mimeType);
-        }
-        // Add metadata to jcr:content/metadata node
-        Object.entries(metadata).forEach(([key, value]) => {
-          formData.append(`jcr:content/metadata/${key}`, String(value));
-        });
-        // Use fetch.post helper for upload
-        const uploadResponse = await this.fetch.post(assetPath, formData);
-        // Verify the asset was created
-        const assetData = await this.fetch.get(`${assetPath}.json`);
-        return createSuccessResponse({
-          success: true,
-          assetPath,
-          fileName,
-          mimeType,
-          metadata,
-          uploadResponse,
-          assetData,
-          timestamp: new Date().toISOString(),
-        }, 'uploadAsset');
-      } catch (error: any) {
-        // Fallback to alternative DAM API if available
-        try {
-          const damResponse = await this.fetch.post('/api/assets' + parentPath, {
-            fileName,
-            fileContent,
-            mimeType,
-            metadata
-          });
-          return createSuccessResponse({
-            success: true,
-            assetPath,
-            fileName,
-            mimeType,
-            metadata,
-            uploadResponse: damResponse,
-            fallbackUsed: 'DAM API',
-            timestamp: new Date().toISOString(),
-          }, 'uploadAsset');
-        } catch (fallbackError: any) {
-          throw handleAEMHttpError(error, 'uploadAsset');
-        }
-      }
-    }, 'uploadAsset');
   }
 
   async updateAsset(request: any): Promise<object> {

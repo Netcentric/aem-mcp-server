@@ -91,8 +91,6 @@ export class MCPRequestHandler {
           return await this.aemConnector.activatePage(params);
         case 'deactivatePage':
           return await this.aemConnector.deactivatePage(params);
-        case 'uploadAsset':
-          return await this.aemConnector.uploadAsset(params);
         case 'updateAsset':
           return await this.aemConnector.updateAsset(params);
         case 'deleteAsset':

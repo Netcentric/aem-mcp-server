@@ -43,7 +43,6 @@
 
 | Method | Description | Parameters |
 |--------|-------------|------------|
-| `uploadAsset` | Upload asset to DAM | `parentPath`, `fileName`, `fileContent`, `mimeType`, `metadata` |
 | `updateAsset` | Update existing asset | `assetPath`, `metadata`, `fileContent`, `mimeType` |
 | `deleteAsset` | Delete asset | `assetPath`, `force` |
 | `getAssetMetadata` | Get asset metadata | `assetPath` |
