@@ -22,7 +22,7 @@ This project is designed for non-technical persons who want to manage AEM via na
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20.19.0+ || 22.12.0+ || 23+
 - Access to an AEM instance (local or remote)
 
 ### Installation
