@@ -48,10 +48,10 @@
 
 ## Templates
 
-| Method | Description                                                                                                             | Parameters |
-|--------|-------------------------------------------------------------------------------------------------------------------------|------------|
+| Method | Description | Parameters |
+|--------|-------------|------------|
 | `getTemplates` | Get available page templates. Doesn't support multi-tenancy at the moment. Expects templates to be under /conf/{tenant} | `sitePath` |
-| `getTemplateStructure` | Get detailed template structure                                                                                         | `templatePath` |
+| `getTemplateStructure` | Get detailed template structure | `templatePath` |
 
 ## Components & Metadata
 
