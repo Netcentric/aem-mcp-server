@@ -1,14 +1,15 @@
 {
-  "name": "aem-mcp-server",
-  "version": "2.0.0",
+  "name": "@netcentric/aem-mcp-server",
+  "version": "1.0.0",
   "description": "AEM Model Context Protocol (MCP) server",
+  "license": "AGPL-3.0-only",
   "private": false,
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Netcentric/aem-mcp-server.git"
+    "url": "https://github.com/Netcentric/aem-mcp-server.git"
   },
   "keywords": [
     "AEM",
