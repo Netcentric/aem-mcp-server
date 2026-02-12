@@ -1,7 +1,7 @@
 # AEM MCP Server (aem-mcp-server)
 
 [![semver: semantic-release](https://img.shields.io/badge/semver-semantic--release-blue.svg)](https://github.com/semantic-release/semantic-release)
-[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 AEM MCP Server is a full-featured Model Context Protocol (MCP) server for Adobe Experience Manager (AEM). 
 It provides a simple integration with any AI Agent.
@@ -100,8 +100,6 @@ Sample for AI-based code editors or custom clients:
 }
 ```
 
-![cursor.png](docs/cursor.png)
-
 ## Usage
 
 ```
@@ -114,5 +112,6 @@ For detailed API documentation, please refer to the [API Docs](docs/API.md).
 
 ## Similar Projects
 
-- https://github.com/indrasishbanerjee/aem-mcp-server (Used as a base for this project)
-- https://www.npmjs.com/package/@myea/aem-mcp-handler (Looks like an original source of the above project)
+1. https://github.com/easingthemes/aem-mcp-server (Used as a base for this project)
+1. https://github.com/indrasishbanerjee/aem-mcp-server (Used as a base for #1)
+1. https://www.npmjs.com/package/@myea/aem-mcp-handler (Looks like an original source of #2)
