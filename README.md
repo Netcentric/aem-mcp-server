@@ -34,6 +34,13 @@ This project is designed for non-technical persons who want to manage AEM via na
 ### Installation
 
 ```sh
+npm install @netcentric/aem-mcp-server -g
+```
+
+### Start the Server
+
+With default settings (admin:admin credentials for http://localhost:4502):
+```sh
 npm run build && npm run start
 ```
 
