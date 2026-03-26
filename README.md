@@ -1,89 +1,130 @@
-# npm-package-template
+# @netcentric/aem-mcp-server
+AEM MCP Server
 
-Fully Automated NPM package release
-- Automated semantic-release based on Angular Commit Message Conventions
-- Manual release
-- NPM release
-- GitHub release
-- GitHub Tags
-- Changelog generation
-
-[![Version](https://img.shields.io/npm/v/@netcentric/npm-package-template.svg)](https://npmjs.org/package/@netcentric/npm-package-template)
-[![Build Status](https://github.com/netcentric/npm-package-template/workflows/CI/badge.svg?branch=main)](https://github.com/netcentric/npm-package-template/actions)
-[![CodeQL Analysis](https://github.com/netcentric/npm-package-template/workflows/CodeQL/badge.svg?branch=main)](https://github.com/netcentric/npm-package-template/actions)
+[![Version](https://img.shields.io/npm/v/@netcentric/aem-mcp-server.svg)](https://npmjs.org/package/@netcentric/aem-mcp-server)
+[![Build Status](https://github.com/netcentric/aem-mcp-server/workflows/CI/badge.svg?branch=main)](https://github.com/netcentric/aem-mcp-server/actions)
+[![CodeQL Analysis](https://github.com/netcentric/aem-mcp-server/workflows/CodeQL/badge.svg?branch=main)](https://github.com/netcentric/aem-mcp-server/actions)
 [![semver: semantic-release](https://img.shields.io/badge/semver-semantic--release-blue.svg)](https://github.com/semantic-release/semantic-release)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-## TLDR;
 
-1. Create a new repo from this Template
-   [![Template repo](https://docs.github.com/assets/images/help/repository/use-this-template-button.png)](https://docs.github.com/en/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template)
-2. Update the Readme
-    - replace `@netcentric/npm-package-template`  with the new package_name
-3. Update package.json
-    - replace "name" `@netcentric/npm-package-template`  with the new package_name
-    - replace "repository.url" `https://github.com/netcentric/npm-package-template`  with the new repository url
-    - Add description, and other fields if needed
-4. Update LICENSE
-    - Update `[COMPANY]` name
-    - Update year `[yyyy]`
-5. Update docs/CODE_OF_CONDUCT.md
-    - Update `[COMPANY]` name
-6. Activate automatic release
-    - disable `dry_run` in Release step in .github/workflows/release.yml.
 
-## Content
+AEM MCP Server is a full-featured Model Context Protocol (MCP) server for Adobe Experience Manager (AEM). 
+It provides a simple integration with any AI Agent.
+This project is designed for non-technical persons who want to manage AEM via natural language.
 
-### Docs
-  - LICENSE
-  - docs/CODE_OF_CONDUCT.md
-  - docs/CONTRIBUTING.md
-  - docs/CHANGELOG.md --> dynamically updated
+---
 
-### Issue template
-  - .github/ISSUE_TEMPLATE.md
+## Overview
 
-### PR template
-  - .github/PULL_REQUEST_TEMPLATE.md --> automatically closes connected issue
+- **Chat with your AEM instance** for content, component, and asset operations.
+- **AI IDEs integration** (Cursor, Copilot, Webstorm, VS Code, etc.)
+- **Supports both AEMaaCS and self-hosted instances**
+- **Modern, TypeScript-based AEM MCP server**
+- **REST/JSON-RPC API** with latest MCP features.
 
-### Workflows
-  - CI --> npm ci, test and build
-  - CodeQL --> Perform CodeQL Analysis (Security, etc.)
-  - Release --> semantic-release:
-    * Creates release notes
-    * Updates CHANGELOG
-    * Updates package.json version
-    * Creates Git tag/release
-    * Publish package to NPM
-  - Manual Release --> same as Release, but can be triggered manually in Actions tab
+---
 
-### Release
-  - based on Angular Commit Message Conventions in commits -
-    https://github.com/angular/angular/blob/master/CONTRIBUTING.md#commit-message-header
-  - Commit message format is used to build:
-    * Release notes
-    * Changelog updates
-    * NPM package semver
+## Quick Start
 
-### Commit message Convention
+### Prerequisites
+- Node.js 20.19.0+ || 22.12.0+ || 23+
+- Access to an AEM instance (local or remote)
 
-```
-<type>(<scope>): <short summary>
-│       │             │
-│       │             └─⫸ Summary in present tense. Not capitalized. No period at the end.
-│       │
-│       └─⫸ Commit Scope (optional): project|based|list
-│
-└─⫸ Commit Type: build|ci|docs|feat|fix|perf|refactor|test
+### Installation
+
+```sh
+npm install @netcentric/aem-mcp-server -g
 ```
 
+### Start the Server
 
-#### Major Version Release:
+With default settings (admin:admin credentials for http://localhost:4502):
+```sh
+aem-mcp
+```
 
-In order to trigger Major Version upgrade, `BREAKING CHANGE:` needs to be in the footer of a commit message:
+### Configuration
+```
+Options:
+      --version  Show version number                                   [boolean]
+  -H, --host                         [string] [default: "http://localhost:4502"]
+  -u, --user                                         [string] [default: "admin"]
+  -p, --pass                                         [string] [default: "admin"]
+  -i, --id       clientId                                 [string] [default: ""]
+  -s, --secret   clientSecret                             [string] [default: ""]
+  -m, --mcpPort                                         [number] [default: 8502]
+  -h, --help     Show help                                             [boolean]
+```
+
+For AEMaaCS, use the `clientId` and `clientSecret` for authentication. [More info](https://developer.adobe.com/developer-console/docs/guides/authentication/ServerToServerAuthentication/implementation).
+For self-hosted AEM use user/pass. The default credentials are `admin:admin`.
+
+### Example Command
+```sh
+aem-mcp -u=user@domain.com -p=mypass -H=https://author-qa.domain.com
+```
+
+### Add AEM MCP to AI IDE
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=AEM&config=eyJ1cmwiOiJodHRwOi8vMTI3LjAuMC4xOjg1MDIvbWNwIn0%3D)
+
+---
+
+## Features
+
+- **AEM Page & Asset Management**: Create, update, delete, activate, deactivate, and replicate pages and assets
+- **Component Operations**: Validate, update, scan, and manage AEM components (including Experience Fragments)
+- **Advanced Search**: QueryBuilder, fulltext, fuzzy, and enhanced page search
+- **Replication & Rollout**: Publish/unpublish content, roll out changes to language copies
+- **Text & Image Extraction**: Extract all text and images from pages, including fragments
+- **Template & Structure Discovery**: List templates, analyze page/component structure
+- **Workflow and Inbox Operations**: Manage workflow operation like List, start, advance workflow stages
+- **JCR Node Access**: Legacy and modern node/content access
+- **AI/LLM Integration**: Natural language interface for AEM via OpenAI, Anthropic, Ollama, or custom LLMs
+- **Security**: Auth, environment-based config, and safe operation defaults
+
+---
+
+## AI IDE Integration (Cursor, Copilot, etc.)
+
+AEM MCP Server is compatible with modern AI IDEs and code editors that support MCP protocol, such as **Cursor** and **Copilot** (eg in WebStorm or VS Code).
+
+### How to Connect:
+1. **Install and run the AEM MCP Server** as described above.
+2. **Configure your IDE** to connect to the MCP server:
+   - Open your IDE's MCP server settings.
+   - Add a new server with:
+     - **Type:** Custom MCP
+     - **url:** `http://127.0.0.1:8502/mcp`
+
+3. **Restart your IDE** if needed. The IDE will now be able to:
+   - List, search, and manage AEM content
+   - Run MCP methods (CRUD, search, rollout, etc.)
+
+Sample for AI-based code editors or custom clients:
+
+```json
+{
+  "mcpServers": {
+    "AEM": {
+      "url": "http://127.0.0.1:8502/mcp"
+    }
+  }
+}
+```
+
+## Usage
 
 ```
-<type>(<scope>): <short summary>
-<BLANK LINE>
-BREAKING CHANGE: <breaking change summary>
+List all components on MyPage
 ```
+
+## API Documentation
+
+For detailed API documentation, please refer to the [API Docs](docs/API.md).
+
+## Similar Projects
+
+1. https://github.com/easingthemes/aem-mcp-server (Used as a base for this project)
+1. https://github.com/indrasishbanerjee/aem-mcp-server (Used as a base for #1)
+1. https://www.npmjs.com/package/@myea/aem-mcp-handler (Looks like an original source of #2)

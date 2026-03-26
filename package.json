@@ -1,21 +1,56 @@
 {
-  "name": "@netcentric/npm-package-template",
+  "name": "@netcentric/aem-mcp-server",
   "version": "1.0.0",
-  "description": "NPM Package Automation Template",
-  "license": "Apache-2.0",
+  "description": "AEM Model Context Protocol (MCP) server",
+  "license": "AGPL-3.0-only",
   "private": false,
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/netcentric/npm-package-template"
-  },
-  "main": "src/index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\""
+    "url": "https://github.com/Netcentric/aem-mcp-server.git"
   },
   "keywords": [
-    "npm automation"
-  ]
+    "AEM",
+    "MCP",
+    "Model Context Protocol",
+    "LLM",
+    "Adobe Experience Manager",
+    "TypeScript"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "aem-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:types && npm run build:ts",
+    "build:ts": "esbuild src/**/*.ts src/*.ts --outdir=dist --platform=node --minify",
+    "build:types": "tsc --emitDeclarationOnly",
+    "start": "MCP_LOGGER=true node dist/cli.js",
+    "test:dev": "node ./dist/cli.js",
+    "test:npm": "npm pack && npm install -g ./aem-mcp-server-$npm_package_version.tgz && aem-mcp -e -H=http://localhost:5502"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.3",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
+    "@types/yargs": "^17.0.33",
+    "esbuild": "^0.25.9",
+    "pptxgenjs": "^4.0.1",
+    "typescript": "^5.9.2"
+  },
+  "type": "module"
 }
