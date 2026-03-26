@@ -41,7 +41,7 @@ npm install @netcentric/aem-mcp-server -g
 
 With default settings (admin:admin credentials for http://localhost:4502):
 ```sh
-npm run build && npm run start
+aem-mcp
 ```
 
 ### Configuration
