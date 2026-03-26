@@ -3,16 +3,14 @@
 ## Component Operations
 
 | Method | Description | Parameters |
-|--------|-------------|------------|
-| `validateComponent` | Validate component changes before applying | `locale`, `page_path`, `component`, `props` |
+|--------|------------|------------|
 | `updateComponent` | Update component properties. Validates properties against component dialog definitions (dropdown options, checkbox values, etc.). | `componentPath`, `properties` |
 | `bulkUpdateComponents` | Update multiple components with validation | `updates[]`, `validateFirst`, `continueOnError` |
 | `scanPageComponents` | Discover all components on a page | `pagePath` |
 | `addComponent` | Add component to a page. Automatically applies `cq:template` structure if available. Validates properties against component dialog definitions. | `pagePath`, `resourceType`, `containerPath`, `name`, `properties` |
 | `deleteComponent` | Delete a component | `componentPath`, `force` |
-| `convertComponents` | Convert components on a single page | `pagePath`, `sourceResourceType`, `targetResourceType`, `requiredProperties`, `continueOnError` |
+| `convertComponents` | Convert components on a single page. Existing components are deleted and new are created. Properties are not preserved. | `pagePath`, `sourceResourceType`, `targetResourceType`, `requiredProperties`, `continueOnError` |
 | `bulkConvertComponents` | Convert components across multiple pages | `sourceResourceType`, `targetResourceType`, `pagePaths[]` or `searchPath`, `depth`, `limit`, `requiredProperties`, `continueOnError` |
-| `undoChanges` | Undo last component changes | `jobId` |
 
 ## Page Operations
 
@@ -24,7 +22,7 @@
 | `getPageProperties` | Get page properties | `pagePath` |
 | `getPageContent` | Get all page content (XF, CF) | `pagePath` |
 | `getAllTextContent` | Get all text content from page | `pagePath` |
-| `getPageTextContent` | Get text content from page | `pagePath` |
+| `getPageTextContent` | Get text content from page. May need fine-tunning for the specific project needs. | `pagePath` |
 | `getPageImages` | Get all images from page | `pagePath` |
 | `enhancedPageSearch` | Intelligent page search with fallbacks | `searchTerm`, `basePath`, `includeAlternateLocales` |
 | `activatePage` | Publish a page | `pagePath`, `activateTree` |
@@ -36,15 +34,13 @@
 | Method | Description | Parameters |
 |--------|-------------|------------|
 | `fetchSites` | Get all available sites | - |
-| `fetchLanguageMasters` | Get language masters for a site | `site` |
-| `fetchAvailableLocales` | Get available locales | `site`, `languageMasterPath` |
-| `replicateAndPublish` | Replicate and publish to locales | `selectedLocales[]`, `componentData`, `localizedOverrides` |
+| `fetchLanguageMasters` | Get language masters for a site. Considers "master" and "language-masters" under tenant | `site` |
+| `fetchAvailableLocales` | Get available locales | `site` |
 
 ## Assets
 
 | Method | Description | Parameters |
 |--------|-------------|------------|
-| `uploadAsset` | Upload asset to DAM | `parentPath`, `fileName`, `fileContent`, `mimeType`, `metadata` |
 | `updateAsset` | Update existing asset | `assetPath`, `metadata`, `fileContent`, `mimeType` |
 | `deleteAsset` | Delete asset | `assetPath`, `force` |
 | `getAssetMetadata` | Get asset metadata | `assetPath` |
@@ -54,7 +50,7 @@
 
 | Method | Description | Parameters |
 |--------|-------------|------------|
-| `getTemplates` | Get available page templates | `sitePath` |
+| `getTemplates` | Get available page templates. Doesn't support multi-tenancy at the moment. Expects templates to be under /conf/{tenant} | `sitePath` |
 | `getTemplateStructure` | Get detailed template structure | `templatePath` |
 
 ## Components & Metadata
@@ -68,7 +64,7 @@
 | Method | Description | Parameters |
 |--------|-------------|------------|
 | `searchContent` | Search using Query Builder | `type`, `fulltext`, `path`, `limit` |
-| `executeJCRQuery` | Execute JCR query | `query`, `limit` |
+| `executeJCRQuery` | Currently it's essentially a wrapper for Query Builder, with the path "/content" and type cq:Page. Note: `query` is a fulltext search term and not a JCR Query | `query`, `limit` |
 
 ## Workflows
 
@@ -130,8 +126,6 @@ completeWorkItem({
 |--------|-------------|------------|
 | `getNodeContent` | Get JCR node content (legacy) | `path`, `depth` |
 | `listChildren` | List child nodes (legacy) | `path` |
-| `getStatus` | Get workflow status | `workflowId` |
-| `listMethods` | Get list of available methods | - |
 
 ## Bulk Operations
 

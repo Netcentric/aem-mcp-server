@@ -9,20 +9,6 @@ type ToolDefinition = {
 
 export const tools: ToolDefinition[] = [
   {
-    name: 'validateComponent',
-    description: 'Validate component changes before applying them',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        locale: { type: 'string' },
-        pagePath: { type: 'string' },
-        component: { type: 'string' },
-        props: { type: 'object' },
-      },
-      required: ['locale', 'pagePath', 'component', 'props'],
-    },
-  },
-  {
     name: 'updateComponent',
     description: 'Update component properties in AEM',
     inputSchema: {
@@ -32,17 +18,6 @@ export const tools: ToolDefinition[] = [
         properties: { type: 'object' },
       },
       required: ['componentPath', 'properties'],
-    },
-  },
-  {
-    name: 'undoChanges',
-    description: 'Undo the last component changes',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jobId: { type: 'string' },
-      },
-      required: ['jobId'],
     },
   },
   {
@@ -72,27 +47,13 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'fetchAvailableLocales',
-    description: 'Get available locales for a site and language master',
+    description: 'Get available locales for a site',
     inputSchema: {
       type: 'object',
       properties: {
         site: { type: 'string' },
-        languageMasterPath: { type: 'string' },
       },
-      required: ['site', 'languageMasterPath'],
-    },
-  },
-  {
-    name: 'replicateAndPublish',
-    description: 'Replicate and publish content to selected locales',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        selectedLocales: { type: 'array', items: { type: 'string' } },
-        componentData: { type: 'object' },
-        localizedOverrides: { type: 'object' },
-      },
-      required: ['selectedLocales', 'componentData'],
+      required: ['site'],
     },
   },
   {
@@ -220,15 +181,6 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'getStatus',
-    description: 'Get workflow status by ID',
-    inputSchema: {
-      type: 'object',
-      properties: { workflowId: { type: 'string' } },
-      required: ['workflowId'],
-    },
-  },
-  {
     name: 'enhancedPageSearch',
     description: 'Intelligent page search with comprehensive fallback strategies and cross-section search',
     inputSchema: {
@@ -345,21 +297,6 @@ export const tools: ToolDefinition[] = [
         deactivateTree: { type: 'boolean' },
       },
       required: ['pagePath'],
-    },
-  },
-  {
-    name: 'uploadAsset',
-    description: 'Upload a new asset to AEM DAM',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        parentPath: { type: 'string' },
-        fileName: { type: 'string' },
-        fileContent: { type: 'string' },
-        mimeType: { type: 'string' },
-        metadata: { type: 'object' },
-      },
-      required: ['parentPath', 'fileName', 'fileContent'],
     },
   },
   {

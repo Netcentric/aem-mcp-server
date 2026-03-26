@@ -1,10 +1,13 @@
-# AEM MCP Server (aem-mcp-server)
+# @netcentric/aem-mcp-server
+AEM MCP Server
 
-[![Version](https://img.shields.io/npm/v/aem-mcp-server.svg)](https://npmjs.org/package/aem-mcp-server)
-[![Release Status](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml/badge.svg)](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml)
-[![CodeQL Analysis](https://github.com/easingthemes/aem-mcp-server/workflows/CodeQL/badge.svg?branch=main)](https://github.com/easingthemes/aem-mcp-server/actions)
+[![Version](https://img.shields.io/npm/v/@netcentric/aem-mcp-server.svg)](https://npmjs.org/package/@netcentric/aem-mcp-server)
+[![Build Status](https://github.com/netcentric/aem-mcp-server/workflows/CI/badge.svg?branch=main)](https://github.com/netcentric/aem-mcp-server/actions)
+[![CodeQL Analysis](https://github.com/netcentric/aem-mcp-server/workflows/CodeQL/badge.svg?branch=main)](https://github.com/netcentric/aem-mcp-server/actions)
 [![semver: semantic-release](https://img.shields.io/badge/semver-semantic--release-blue.svg)](https://github.com/semantic-release/semantic-release)
-[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
+
 
 AEM MCP Server is a full-featured Model Context Protocol (MCP) server for Adobe Experience Manager (AEM). 
 It provides a simple integration with any AI Agent.
@@ -25,15 +28,17 @@ This project is designed for non-technical persons who want to manage AEM via na
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20.19.0+ || 22.12.0+ || 23+
 - Access to an AEM instance (local or remote)
 
 ### Installation
+
 ```sh
-npm install aem-mcp-server -g
+npm install @netcentric/aem-mcp-server -g
 ```
 
 ### Start the Server
+
 With default settings (admin:admin credentials for http://localhost:4502):
 ```sh
 aem-mcp
@@ -108,8 +113,6 @@ Sample for AI-based code editors or custom clients:
 }
 ```
 
-![cursor.png](docs/cursor.png)
-
 ## Usage
 
 ```
@@ -122,5 +125,6 @@ For detailed API documentation, please refer to the [API Docs](docs/API.md).
 
 ## Similar Projects
 
-- https://github.com/indrasishbanerjee/aem-mcp-server (Used as a base for this project)
-- https://www.npmjs.com/package/@myea/aem-mcp-handler (Looks like an original source of the above project)
+1. https://github.com/easingthemes/aem-mcp-server (Used as a base for this project)
+1. https://github.com/indrasishbanerjee/aem-mcp-server (Used as a base for #1)
+1. https://www.npmjs.com/package/@myea/aem-mcp-handler (Looks like an original source of #2)

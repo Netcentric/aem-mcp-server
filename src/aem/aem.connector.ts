@@ -1,5 +1,5 @@
 import { AEMConfig, getAEMConfig, isValidContentPath, isValidLocale } from './aem.config.js';
-import { AEM_ERROR_CODES, createAEMError, createSuccessResponse, handleAEMHttpError, safeExecute, validateComponentOperation } from './aem.errors.js';
+import { AEM_ERROR_CODES, createAEMError, createSuccessResponse, handleAEMHttpError, safeExecute } from './aem.errors.js';
 import { CliParams } from '../types.js';
 import { AEMAuth, AEMFetch } from './aem.fetch.js';
 import { LOGGER } from '../utils/logger.js';
@@ -182,36 +182,6 @@ export class AEMConnector {
     }
   }
 
-  async validateComponent(request: any): Promise<object> {
-    return safeExecute<object>(async () => {
-      const pagePath = request.pagePath || request.page_path;
-      const { locale, component, props } = request;
-      validateComponentOperation(locale, pagePath, component, props);
-      if (!isValidLocale(locale, this.aemConfig)) {
-        throw createAEMError(AEM_ERROR_CODES.INVALID_LOCALE, `Locale '${locale}' is not supported`, { locale, allowedLocales: this.aemConfig.validation.allowedLocales });
-      }
-      if (!isValidContentPath(pagePath, this.aemConfig)) {
-        throw createAEMError(AEM_ERROR_CODES.INVALID_PATH, `Path '${pagePath}' is not within allowed content roots`, { path: pagePath, allowedRoots: Object.values(this.aemConfig.contentPaths) });
-      }
-      const url = `${pagePath}.json`;
-      const response = await this.fetch.get(url, {
-        params: { ':depth': '2' },
-        timeout: this.aemConfig.queries.timeoutMs,
-      });
-      const validation = this.validateComponentProps(response.data, component, props);
-      return createSuccessResponse({
-        message: 'Component validation completed successfully',
-        pageData: response.data,
-        component,
-        locale,
-        validation,
-        configUsed: {
-          allowedLocales: this.aemConfig.validation.allowedLocales,
-        },
-      }, 'validateComponent');
-    }, 'validateComponent');
-  }
-
   validateComponentProps(pageData: any, componentType: string, props: any) {
     const warnings: string[] = [];
     const errors: string[] = [];
@@ -347,15 +317,6 @@ export class AEMConnector {
     }, 'updateComponent');
   }
 
-  async undoChanges(request: any): Promise<object> {
-    // Not implemented: AEM MCP does not support undo/rollback. Use AEM version history.
-    return createSuccessResponse({
-      message: 'undoChanges is not implemented. Please use AEM version history for undo/rollback.',
-      request,
-      timestamp: new Date().toISOString(),
-    }, 'undoChanges');
-  }
-
   async scanPageComponents(pagePath: string): Promise<object> {
     return safeExecute<object>(async () => {
       const url = `${pagePath}.infinity.json`;
@@ -418,14 +379,40 @@ export class AEMConnector {
   async fetchLanguageMasters(site: string): Promise<object> {
     return safeExecute<object>(async () => {
       const url = `/content/${site}.2.json`;
-      const data = await this.fetch.get(url, { ':depth': '3' });
+      const data = await this.fetch.get(url);
       const masters: any[] = [];
+
+      let masterNode: any = null;
+      let masterPath: string = '';
+      
       Object.entries(data).forEach(([key, value]: [string, any]) => {
-        if (key.startsWith('jcr:') || key.startsWith('sling:')) return;
-        if (value && typeof value === 'object' && value['jcr:content']) {
-          // Only include nodes named 'master', 'language-masters', or with jcr:language property
+        if ((key === 'master' || key === 'language-masters') && value && typeof value === 'object') {
+          masterNode = value;
+          masterPath = `/content/${site}/${key}`;
         }
       });
+      
+      if (!masterNode) {
+        return createSuccessResponse({
+          site,
+          languageMasters: [],
+          message: 'No master or language-masters node found'
+        }, 'fetchLanguageMasters');
+      }
+      
+      // Get locales under master/language-masters
+      Object.entries(masterNode).forEach(([key, value]: [string, any]) => {
+        if (key.startsWith('jcr:') || key.startsWith('sling:')) return;
+        if (value && typeof value === 'object') {
+          masters.push({
+            name: key,
+            path: `${masterPath}/${key}`,
+            title: value['jcr:content']?.['jcr:title'] || value['jcr:title'] || key,
+            language: value['jcr:content']?.['jcr:language'] || value['jcr:language'] || key,
+          });
+        }
+      });
+      
       return createSuccessResponse({
         site,
         languageMasters: masters,
@@ -433,39 +420,62 @@ export class AEMConnector {
     }, 'fetchLanguageMasters');
   }
 
-  async fetchAvailableLocales(site: string, languageMasterPath: string): Promise<object> {
+  async fetchAvailableLocales(site: string): Promise<object> {
     return safeExecute<object>(async () => {
-      const url = `${languageMasterPath}.json`;
-      const data = await this.fetch.get(url, { ':depth': '2' });
-      const locales: any[] = [];
-      Object.entries(data).forEach(([key, value]: [string, any]) => {
-        if (key.startsWith('jcr:') || key.startsWith('sling:')) return;
-        if (value && typeof value === 'object') {
-          locales.push({
-            name: key,
-            title: value['jcr:content']?.['jcr:title'] || key,
-            language: value['jcr:content']?.['jcr:language'] || key,
-          });
-        }
-      });
+      const url = `/content/${site}.4.json`;
+      const data = await this.fetch.get(url);
+      const locales: Record<string, { path: string; title: string; language?: string; country?: string }> = {};
+      
+      const findLocales = (node: any, currentPath: string, pathSegments: string[] = []) => {
+        if (!node || typeof node !== 'object') return;
+        
+        Object.entries(node).forEach(([key, value]: [string, any]) => {
+          if (key.startsWith('jcr:') || key.startsWith('sling:') || 
+              key.startsWith('cq:') || key.startsWith('rep:') || 
+              key.startsWith('oak:') || key === 'jcr:content') {
+            return;
+          }
+          
+          if (value && typeof value === 'object') {
+            const childPath = `${currentPath}/${key}`;
+            const newSegments = [...pathSegments, key];
+            
+            
+            const jcrContent = value['jcr:content'];
+            const hasContent = jcrContent && typeof jcrContent === 'object';
+            const language = jcrContent?.['jcr:language'] || null;
+            
+            const isLanguageCode = key.length === 2 || key.length === 3;
+            const parentIsCountryCode = pathSegments.length > 0 && 
+                                       (pathSegments[pathSegments.length - 1].length === 2 || 
+                                        pathSegments[pathSegments.length - 1].length === 3);
+            
+            if (hasContent && isLanguageCode && parentIsCountryCode) {
+              const country = pathSegments[pathSegments.length - 1].toUpperCase();
+              const lang = key.toLowerCase();
+              const localeKey = `${lang}_${country}`;
+
+              locales[localeKey] = {
+                path: childPath,
+                title: jcrContent?.['jcr:title'] || key,
+                language: language || `${lang}_${country}`,
+                country: country,
+              };
+            }
+            
+            findLocales(value, childPath, newSegments);
+          }
+        });
+      };
+      
+      findLocales(data, `/content/${site}`, []);
+      
       return createSuccessResponse({
         site,
-        languageMasterPath,
-        availableLocales: locales,
+        locales,
+        totalCount: Object.keys(locales).length,
       }, 'fetchAvailableLocales');
     }, 'fetchAvailableLocales');
-  }
-
-  async replicateAndPublish(selectedLocales: any, componentData: any, localizedOverrides: any): Promise<object> {
-    // Simulate replication logic for now
-    return safeExecute<object>(async () => {
-      return createSuccessResponse({
-        message: 'Replication simulated',
-        selectedLocales,
-        componentData,
-        localizedOverrides,
-      }, 'replicateAndPublish');
-    }, 'replicateAndPublish');
   }
 
   async getAllTextContent(pagePath: string): Promise<object> {
@@ -1357,14 +1367,18 @@ export class AEMConnector {
         throw handleAEMHttpError(error, 'addComponent');
       }
 
-      // Determine container path
+      // Determine container path 
       let targetContainerPath: string;
       if (containerPath) {
         // Use provided container path (can be relative or absolute)
         if (containerPath.startsWith('/')) {
           targetContainerPath = containerPath;
         } else {
-          targetContainerPath = `${pagePath}/jcr:content/${containerPath}`;
+          if (containerPath.includes('jcr:content')) {
+            targetContainerPath = `${pagePath}/${containerPath}`;
+          } else {
+            targetContainerPath = `${pagePath}/jcr:content/${containerPath}`;
+          }
         }
       } else {
         // Try to find the default container (root/container)
@@ -1759,12 +1773,15 @@ export class AEMConnector {
         const formData = new URLSearchParams();
         formData.append('cmd', 'Activate');
         formData.append('path', pagePath);
-        formData.append('ignoredeactivated', 'false');
-        formData.append('onlymodified', 'false');
+        let data;
         if (activateTree) {
+          formData.append('ignoredeactivated', 'false');
+          formData.append('onlymodified', 'false');
           formData.append('deep', 'true');
+          data = await this.fetch.post('/libs/replication/treeactivation.html', formData);
+        } else {
+          data = await this.fetch.post('/bin/replicate.json', formData);
         }
-        const data = await this.fetch.post('/bin/replicate.json', formData);
         return createSuccessResponse({
           success: true,
           activatedPath: pagePath,
@@ -1839,76 +1856,6 @@ export class AEMConnector {
         }
       }
     }, 'deactivatePage');
-  }
-
-  async uploadAsset(request: any): Promise<object> {
-    return safeExecute<object>(async () => {
-      const { parentPath, fileName, fileContent, mimeType, metadata = {} } = request;
-      if (!isValidContentPath(parentPath, this.aemConfig)) {
-        throw createAEMError(AEM_ERROR_CODES.INVALID_PARAMETERS, `Invalid parent path: ${String(parentPath)}`, { parentPath });
-      }
-      const assetPath = `${parentPath}/${fileName}`;
-      try {
-        // Use proper AEM DAM asset upload via Sling POST servlet
-        const formData = new URLSearchParams();
-        // Set the file content (base64 or binary)
-        if (typeof fileContent === 'string') {
-          // Assume base64 encoded content
-          formData.append('file', fileContent);
-        } else {
-          formData.append('file', fileContent.toString());
-        }
-        // Set required Sling POST parameters for asset creation
-        formData.append('fileName', fileName);
-        formData.append(':operation', 'import');
-        formData.append(':contentType', 'json');
-        formData.append(':replace', 'true');
-        formData.append('jcr:primaryType', 'dam:Asset');
-        if (mimeType) {
-          formData.append('jcr:content/jcr:mimeType', mimeType);
-        }
-        // Add metadata to jcr:content/metadata node
-        Object.entries(metadata).forEach(([key, value]) => {
-          formData.append(`jcr:content/metadata/${key}`, String(value));
-        });
-        // Use fetch.post helper for upload
-        const uploadResponse = await this.fetch.post(assetPath, formData);
-        // Verify the asset was created
-        const assetData = await this.fetch.get(`${assetPath}.json`);
-        return createSuccessResponse({
-          success: true,
-          assetPath,
-          fileName,
-          mimeType,
-          metadata,
-          uploadResponse,
-          assetData,
-          timestamp: new Date().toISOString(),
-        }, 'uploadAsset');
-      } catch (error: any) {
-        // Fallback to alternative DAM API if available
-        try {
-          const damResponse = await this.fetch.post('/api/assets' + parentPath, {
-            fileName,
-            fileContent,
-            mimeType,
-            metadata
-          });
-          return createSuccessResponse({
-            success: true,
-            assetPath,
-            fileName,
-            mimeType,
-            metadata,
-            uploadResponse: damResponse,
-            fallbackUsed: 'DAM API',
-            timestamp: new Date().toISOString(),
-          }, 'uploadAsset');
-        } catch (fallbackError: any) {
-          throw handleAEMHttpError(error, 'uploadAsset');
-        }
-      }
-    }, 'uploadAsset');
   }
 
   async updateAsset(request: any): Promise<object> {
