@@ -161,7 +161,11 @@ export class AEMFetch {
     
     // Basic Authentication (username/password)
     if (config.username && config.password) {
-      return Buffer.from(`${config.username}:${config.password}`).toString('base64');
+      // AEM Sling decodes Basic credentials as ISO-8859-1 (not UTF-8). Encoding the
+      // source as 'latin1' keeps ASCII identical while making 0x80-0xFF code points
+      // (é/ü/ñ/etc.) round-trip correctly. Passwords with code points > 0xFF still
+      // can't be expressed in Basic auth and are out of scope.
+      return Buffer.from(`${config.username}:${config.password}`, 'latin1').toString('base64');
     }
     
     throw new Error('No authentication credentials provided');
