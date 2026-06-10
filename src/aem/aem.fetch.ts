@@ -99,6 +99,16 @@ export class AEMFetch {
   }
 
   /**
+   * True when the configured auth is OAuth Server-to-Server (clientId+secret),
+   * false when Basic (username+password). Refreshing the token is only useful
+   * for OAuth — for Basic, re-encoding the same credentials produces the same
+   * Base64, so a 401-retry is a wasted round-trip.
+   */
+  private get isOAuth(): boolean {
+    return !!this.config.auth.clientId && !this.config.auth.username;
+  }
+
+  /**
    * Returns a fetch instance with proper headers for AEM authentication.
    */
   private getFetchInstance(): FetchInstance {
@@ -110,8 +120,7 @@ export class AEMFetch {
       
       // Always set Authorization (required for all requests)
       // Use Bearer for OAuth server-to-server, Basic for username/password
-      const isOAuth = this.config.auth.clientId && !this.config.auth.username;
-      if (isOAuth) {
+      if (this.isOAuth) {
         headers.set('Authorization', `Bearer ${this.token}`);
       } else {
         headers.set('Authorization', `Basic ${this.token}`);
@@ -237,7 +246,7 @@ export class AEMFetch {
     let retryTimeoutId: NodeJS.Timeout | undefined;
     try {
       response = await this.fetch(url, options);
-      if (response.status === 401 && shouldRetryOn401(response)) {
+      if (response.status === 401 && this.isOAuth && shouldRetryOn401(response)) {
         LOGGER.warn(`AEM request to ${sanitizeUrl(url)} returned 401 Unauthorized. Attempting to refresh token...`);
         await this.refreshAuthToken();
         // Fresh timeout window for the retry: the original signal may already be aborted
@@ -444,7 +453,7 @@ export class AEMFetch {
         headers
       });
 
-      if (response.status === 401 && shouldRetryOn401(response)) {
+      if (response.status === 401 && this.isOAuth && shouldRetryOn401(response)) {
         await this.refreshAuthToken();
         // Fresh timeout window for the retry: the original signal may already be aborted
         // if the refresh took longer than the original `timeout`.
