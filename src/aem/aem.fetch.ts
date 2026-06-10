@@ -46,6 +46,31 @@ function isSameOrigin(from: string, to: string): boolean {
   }
 }
 
+/**
+ * Decide whether a 401 response should trigger a token refresh + retry.
+ * Inspects the `WWW-Authenticate` header for an OAuth Bearer `error=` directive
+ * (RFC 6750). Retries are only useful for `invalid_token`/`expired_token`;
+ * `insufficient_scope`, `invalid_request`, `insufficient_user_authentication`
+ * cannot be solved by a fresh token, so we fail fast instead of burning a
+ * round-trip. Absence of the header or unknown error codes fall back to retry.
+ */
+function shouldRetryOn401(response: Response): boolean {
+  const wwwAuth = response.headers.get('WWW-Authenticate');
+  if (!wwwAuth) return true;
+  const match = wwwAuth.match(/error\s*=\s*"([^"]+)"|error\s*=\s*([^\s,]+)/i);
+  if (!match) return true;
+  const err = (match[1] || match[2]).toLowerCase();
+  if (err === 'invalid_token' || err === 'expired_token') return true;
+  if (
+    err === 'insufficient_scope' ||
+    err === 'invalid_request' ||
+    err === 'insufficient_user_authentication'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export class AEMFetch {
   private fetch: FetchInstance | null;
   private readonly config: AEMFetchConfig;
@@ -208,7 +233,7 @@ export class AEMFetch {
     let retryTimeoutId: NodeJS.Timeout | undefined;
     try {
       response = await this.fetch(url, options);
-      if (response.status === 401) {
+      if (response.status === 401 && shouldRetryOn401(response)) {
         LOGGER.warn(`AEM request to ${sanitizeUrl(url)} returned 401 Unauthorized. Attempting to refresh token...`);
         await this.refreshAuthToken();
         // Fresh timeout window for the retry: the original signal may already be aborted
@@ -415,7 +440,7 @@ export class AEMFetch {
         headers
       });
 
-      if (response.status === 401) {
+      if (response.status === 401 && shouldRetryOn401(response)) {
         await this.refreshAuthToken();
         // Fresh timeout window for the retry: the original signal may already be aborted
         // if the refresh took longer than the original `timeout`.
