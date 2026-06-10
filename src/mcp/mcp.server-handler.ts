@@ -6,6 +6,7 @@ import { transports } from './mcp.transports.js';
 import { createMCPServer } from './mcp.server.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
+import { redactCliParams } from '../utils/sanitize.js';
 
 export const handleRequest = async (req: Request, res: Response, cliParams: CliParams) => {
   LOGGER.log('1.Received MCP request:', req.body);
@@ -54,7 +55,7 @@ export const handleRequest = async (req: Request, res: Response, cliParams: CliP
       });
 
       // Connect the transport to the MCP server BEFORE handling the request
-      LOGGER.log('Connecting to MCP server with CLI params:', cliParams);
+      LOGGER.log('Connecting to MCP server with CLI params:', redactCliParams(cliParams));
       const server = createMCPServer(cliParams);
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);

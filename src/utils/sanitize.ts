@@ -28,3 +28,43 @@ export function hasUrlCredentials(url: string): boolean {
     return false;
   }
 }
+
+export type RedactedCliParams = {
+  host: string;
+  authMode: 'basic' | 'oauth' | 'none';
+  mcpPort?: number;
+  hasUser: boolean;
+  hasPass: boolean;
+  hasId: boolean;
+  hasSecret: boolean;
+};
+
+/**
+ * Render `CliParams` in a form safe to log. Strips userinfo from `host`,
+ * collapses credential presence to booleans, and surfaces the auth mode
+ * without echoing any secret value.
+ */
+export function redactCliParams(p: {
+  host?: string;
+  user?: string;
+  pass?: string;
+  id?: string;
+  secret?: string;
+  mcpPort?: number;
+}): RedactedCliParams {
+  const hasUser = !!p.user;
+  const hasPass = !!p.pass;
+  const hasId = !!p.id;
+  const hasSecret = !!p.secret;
+  const authMode: RedactedCliParams['authMode'] =
+    hasId && hasSecret ? 'oauth' : hasUser && hasPass ? 'basic' : 'none';
+  return {
+    host: p.host ? sanitizeUrl(p.host) : '<unset>',
+    authMode,
+    mcpPort: p.mcpPort,
+    hasUser,
+    hasPass,
+    hasId,
+    hasSecret,
+  };
+}
