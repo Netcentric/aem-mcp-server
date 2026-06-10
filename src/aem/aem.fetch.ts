@@ -33,6 +33,19 @@ export type AEMFetchConfig = {
 
 type FetchInstance = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Same-origin check for redirect handling: a redirect is treated as same-origin
+ * only when scheme + host + port all match. Unparseable inputs are treated as
+ * cross-origin (fail safer — strip credentials rather than risk leaking them).
+ */
+function isSameOrigin(from: string, to: string): boolean {
+  try {
+    return new URL(from).origin === new URL(to).origin;
+  } catch {
+    return false;
+  }
+}
+
 export class AEMFetch {
   private fetch: FetchInstance | null;
   private readonly config: AEMFetchConfig;
@@ -188,10 +201,21 @@ export class AEMFetch {
       if (response.status >= 300 && response.status < 400 && !response.ok) {
         const location = response.headers.get('Location');
         if (location) {
-          LOGGER.warn(`Redirect detected (${response.status}) from ${sanitizeUrl(url)} to ${sanitizeUrl(location)}`);
-          // Follow the redirect manually if fetch didn't
           const redirectUrl = location.startsWith('http') ? location : `${this.config.host}${location}`;
-          response = await this.fetch(redirectUrl, { ...options, redirect: 'follow' });
+          const sameOrigin = isSameOrigin(url, redirectUrl);
+          LOGGER.warn(
+            `Redirect detected (${response.status}) from ${sanitizeUrl(url)} to ${sanitizeUrl(redirectUrl)}` +
+            (sameOrigin ? '' : ' (cross-origin: Authorization stripped)')
+          );
+          if (sameOrigin) {
+            response = await this.fetch(redirectUrl, { ...options, redirect: 'follow' });
+          } else {
+            // Cross-origin: do NOT use this.fetch (it would re-inject Authorization via
+            // getFetchInstance). Use bare fetch and explicitly drop any Authorization header.
+            const safeHeaders = new Headers(options.headers || {});
+            safeHeaders.delete('Authorization');
+            response = await fetch(redirectUrl, { ...options, headers: safeHeaders, redirect: 'follow' });
+          }
         }
       }
       if (!response.ok) {
