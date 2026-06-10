@@ -4,6 +4,7 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { startServer } from './index.js';
 import { CliParams } from './types';
+import { hasUrlCredentials } from './utils/sanitize.js';
 
 type CliArgs = CliParams & {
   help?: boolean;
@@ -26,4 +27,10 @@ if (argv.help) {
 }
 
 const { host, user, pass, mcpPort, id, secret } = argv;
+
+if (host && hasUrlCredentials(host)) {
+  console.error('Error: --host (-H) must not contain embedded credentials. Pass them via -u/-p (Basic) or -i/-s (OAuth) instead.');
+  process.exit(1);
+}
+
 startServer({ host, user, pass, mcpPort, id, secret });

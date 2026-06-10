@@ -1,5 +1,6 @@
 import { getAccessToken } from './aem.auth.js';
 import { LOGGER } from '../utils/logger.js';
+import { sanitizeUrl, hasUrlCredentials } from '../utils/sanitize.js';
 
 export type AEMBasicAuth = {
   username: string;
@@ -39,6 +40,9 @@ export class AEMFetch {
   private tokenExpiry: number;
 
   constructor(config: AEMFetchConfig) {
+    if (hasUrlCredentials(config.host)) {
+      throw new Error('AEM host URL must not contain embedded credentials. Pass them via username/password (Basic) or clientId/clientSecret (OAuth).');
+    }
     this.config = config;
     this.fetch = null;
     this.token = '';
@@ -176,7 +180,7 @@ export class AEMFetch {
     try {
       response = await this.fetch(url, options);
       if (response.status === 401) {
-        LOGGER.warn(`AEM request to ${url} returned 401 Unauthorized. Attempting to refresh token...`);
+        LOGGER.warn(`AEM request to ${sanitizeUrl(url)} returned 401 Unauthorized. Attempting to refresh token...`);
         await this.refreshAuthToken();
         response = await this.fetch(url, options);
       }
@@ -184,7 +188,7 @@ export class AEMFetch {
       if (response.status >= 300 && response.status < 400 && !response.ok) {
         const location = response.headers.get('Location');
         if (location) {
-          LOGGER.warn(`Redirect detected (${response.status}) from ${url} to ${location}`);
+          LOGGER.warn(`Redirect detected (${response.status}) from ${sanitizeUrl(url)} to ${sanitizeUrl(location)}`);
           // Follow the redirect manually if fetch didn't
           const redirectUrl = location.startsWith('http') ? location : `${this.config.host}${location}`;
           response = await this.fetch(redirectUrl, { ...options, redirect: 'follow' });
