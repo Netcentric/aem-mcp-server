@@ -51,6 +51,7 @@ export class AEMFetch {
   private readonly config: AEMFetchConfig;
   private token: string;
   private tokenExpiry: number;
+  private inflightToken: Promise<string> | null;
 
   constructor(config: AEMFetchConfig) {
     if (hasUrlCredentials(config.host)) {
@@ -60,6 +61,7 @@ export class AEMFetch {
     this.fetch = null;
     this.token = '';
     this.tokenExpiry = 0;
+    this.inflightToken = null;
   }
 
   /**
@@ -113,10 +115,23 @@ export class AEMFetch {
       if (this.token && now < this.tokenExpiry) {
         return this.token;
       }
-      const token = await getAccessToken(config.clientId, config.clientSecret, config.scope);
-      this.token = token.access_token;
-      this.tokenExpiry = now + (token.expires_in - 60) * 1000;
-      return this.token;
+      // Dedup concurrent mints: if another caller has already kicked off the
+      // IMS request, ride on its promise instead of issuing a parallel mint.
+      // Without this, N concurrent post-expiry callers trigger N IMS calls.
+      if (this.inflightToken) {
+        return this.inflightToken;
+      }
+      this.inflightToken = (async () => {
+        try {
+          const token = await getAccessToken(config.clientId, config.clientSecret, config.scope);
+          this.token = token.access_token;
+          this.tokenExpiry = now + (token.expires_in - 60) * 1000;
+          return this.token;
+        } finally {
+          this.inflightToken = null;
+        }
+      })();
+      return this.inflightToken;
     }
     
     // Basic Authentication (username/password)
