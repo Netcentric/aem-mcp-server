@@ -41,6 +41,58 @@ export function hasUrlCredentials(url: string): boolean {
   }
 }
 
+/**
+ * Reduce an AEM error response body to a short, safe summary suitable for
+ * inclusion in an `AEMOperationError.details` field that may be serialized
+ * back to an MCP client. HTML pages (Sling error pages) collapse to a
+ * placeholder; JSON bodies surface only the `message`/`error` field; plain
+ * text is truncated and stripped of control characters.
+ *
+ * Returns `null` when there is nothing usable.
+ */
+export function summarizeAemBody(data: unknown, maxLen = 200): string | null {
+  if (data == null) return null;
+
+  if (typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    if (typeof obj.message === 'string') return truncate(obj.message, maxLen);
+    if (typeof obj.error === 'string') return truncate(obj.error, maxLen);
+    try {
+      return truncate(JSON.stringify(obj), maxLen);
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof data !== 'string') return null;
+  const str = data.trim();
+  if (!str) return null;
+
+  if (/^<(?:!doctype|html|\?xml)/i.test(str)) {
+    return '<html error page>';
+  }
+
+  try {
+    const parsed = JSON.parse(str);
+    if (parsed && typeof parsed === 'object') {
+      const msg = (parsed as Record<string, unknown>).message;
+      const err = (parsed as Record<string, unknown>).error;
+      if (typeof msg === 'string') return truncate(msg, maxLen);
+      if (typeof err === 'string') return truncate(err, maxLen);
+    }
+  } catch {
+    /* not JSON — fall through to plain-text handling */
+  }
+
+  // eslint-disable-next-line no-control-regex
+  const cleaned = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  return truncate(cleaned, maxLen);
+}
+
+function truncate(s: string, maxLen: number): string {
+  return s.length > maxLen ? s.slice(0, maxLen) + '…' : s;
+}
+
 export type RedactedCliParams = {
   host: string;
   authMode: 'basic' | 'oauth' | 'none';
