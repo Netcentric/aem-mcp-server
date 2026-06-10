@@ -16,6 +16,18 @@ export function sanitizeUrl(url: string): string {
 }
 
 /**
+ * Strip userinfo from every URL-like substring embedded in an error message.
+ * Node fetch's TypeError ("Request cannot be constructed from a URL that
+ * includes credentials: http://user:pass@host/...") is the motivating case,
+ * but any error whose `.message` interpolates a URL benefits from this.
+ */
+export function sanitizeErrorMessage(msg: string): string {
+  if (!msg) return msg;
+  // Match `scheme://userinfo@` and drop the userinfo segment.
+  return msg.replace(/(\bhttps?:\/\/)[^\s@/]+@/gi, '$1');
+}
+
+/**
  * True when the given URL string carries embedded credentials (`user:pass@`).
  * Used at config-load time to reject misconfigured hosts before any fetch is
  * attempted.

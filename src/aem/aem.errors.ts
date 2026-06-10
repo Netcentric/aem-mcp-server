@@ -1,4 +1,5 @@
 import { LOGGER } from '../utils/logger.js';
+import { sanitizeErrorMessage } from '../utils/sanitize.js';
 
 export interface AEMErrorDetails {
   [key: string]: any;
@@ -93,11 +94,12 @@ export function handleAEMHttpError(error: any, operation: string): AEMOperationE
         return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, `HTTP ${status}: ${errorMsg}`, { status, data, operation });
     }
   } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-    return createAEMError(AEM_ERROR_CODES.CONNECTION_FAILED, 'Cannot connect to AEM instance. Check host and network.', { originalError: error.message }, true, 5000);
+    return createAEMError(AEM_ERROR_CODES.CONNECTION_FAILED, 'Cannot connect to AEM instance. Check host and network.', { originalError: sanitizeErrorMessage(error.message) }, true, 5000);
   } else if (error.code === 'ETIMEDOUT') {
-    return createAEMError(AEM_ERROR_CODES.TIMEOUT, 'Request to AEM timed out.', { originalError: error.message }, true, 10000);
+    return createAEMError(AEM_ERROR_CODES.TIMEOUT, 'Request to AEM timed out.', { originalError: sanitizeErrorMessage(error.message) }, true, 10000);
   } else {
-    return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, `Unexpected error during ${operation}: ${error.message}`, { originalError: error.message });
+    const safeMsg = sanitizeErrorMessage(error.message);
+    return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, `Unexpected error during ${operation}: ${safeMsg}`, { originalError: safeMsg });
   }
 }
 
