@@ -205,12 +205,18 @@ export class AEMFetch {
     // Explicitly set redirect to follow (default behavior, but making it explicit)
     options.redirect = options.redirect || 'follow';
     let response: Response;
+    let retryTimeoutId: NodeJS.Timeout | undefined;
     try {
       response = await this.fetch(url, options);
       if (response.status === 401) {
         LOGGER.warn(`AEM request to ${sanitizeUrl(url)} returned 401 Unauthorized. Attempting to refresh token...`);
         await this.refreshAuthToken();
-        response = await this.fetch(url, options);
+        // Fresh timeout window for the retry: the original signal may already be aborted
+        // if the refresh took longer than the original `timeout`.
+        const retry = this.getTimeoutOptions(timeout);
+        retryTimeoutId = retry.timeoutId;
+        const retryOptions = timeout ? { ...options, signal: retry.signal } : options;
+        response = await this.fetch(url, retryOptions);
       }
       // Handle redirect status codes (300-399) - fetch should follow automatically, but log if it doesn't
       if (response.status >= 300 && response.status < 400 && !response.ok) {
@@ -302,6 +308,7 @@ export class AEMFetch {
       }
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      if (retryTimeoutId) clearTimeout(retryTimeoutId);
     }
   }
 
@@ -398,7 +405,8 @@ export class AEMFetch {
     if (timeout) {
       options.signal = signal;
     }
-    
+
+    let retryTimeoutId: NodeJS.Timeout | undefined;
     try {
       const response = await this.fetch(fullUrl, {
         ...options,
@@ -406,20 +414,27 @@ export class AEMFetch {
         body,
         headers
       });
-      
+
       if (response.status === 401) {
         await this.refreshAuthToken();
-        return await this.fetch(fullUrl, {
+        // Fresh timeout window for the retry: the original signal may already be aborted
+        // if the refresh took longer than the original `timeout`.
+        const retry = this.getTimeoutOptions(timeout);
+        retryTimeoutId = retry.timeoutId;
+        const retryInit: RequestInit = {
           ...options,
           method: 'POST',
           body,
-          headers: new Headers(headers)
-        });
+          headers: new Headers(headers),
+        };
+        if (timeout) retryInit.signal = retry.signal;
+        return await this.fetch(fullUrl, retryInit);
       }
-      
+
       return response;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      if (retryTimeoutId) clearTimeout(retryTimeoutId);
     }
   }
 }
