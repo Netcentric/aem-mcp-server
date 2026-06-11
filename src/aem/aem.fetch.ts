@@ -158,6 +158,15 @@ export class AEMFetch {
       this.inflightToken = (async () => {
         try {
           const token = await getAccessToken(config.clientId, config.clientSecret, config.scope);
+          // Reject expires_in <= 60: a value at-or-below the 60s headroom would place
+          // tokenExpiry in the past, forcing an IMS mint on every request. Single-flight
+          // dedups within a tick but still burns a round-trip per call. NaN/undefined
+          // fail this check too (NaN > 60 is false).
+          if (!(token.expires_in > 60)) {
+            throw new Error(
+              `IMS returned invalid expires_in (${token.expires_in}); must be > 60 seconds to leave refresh headroom.`
+            );
+          }
           this.token = token.access_token;
           this.tokenExpiry = now + (token.expires_in - 60) * 1000;
           return this.token;
