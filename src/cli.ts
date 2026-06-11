@@ -17,6 +17,11 @@ const argv: CliArgs = yargs(hideBin(process.argv)).options({
   id: { type: 'string', default: '', alias: 'i', describe: 'clientId' },
   secret: { type: 'string', default: '', alias: 's', describe: 'clientSecret' },
   mcpPort: { type: 'number', default: 8502, alias: 'm' },
+  bind: {
+    type: 'string',
+    default: process.env.MCP_BIND || '127.0.0.1',
+    describe: 'host interface to bind (default 127.0.0.1, loopback-only). Use 0.0.0.0 to expose on the LAN. Env: MCP_BIND.',
+  },
   'allow-origin': {
     type: 'string',
     array: true,
@@ -32,7 +37,7 @@ if (argv.help) {
   process.exit(0); // prevent startServer from running
 }
 
-const { host, user, pass, mcpPort, id, secret } = argv;
+const { host, user, pass, mcpPort, id, secret, bind } = argv;
 const allowOrigin = argv.allowOrigin ?? [];
 
 if (host && hasUrlCredentials(host)) {
@@ -40,4 +45,4 @@ if (host && hasUrlCredentials(host)) {
   process.exit(1);
 }
 
-startServer({ host, user, pass, mcpPort, id, secret, allowOrigin });
+startServer({ host, user, pass, mcpPort, id, secret, allowOrigin, bind });

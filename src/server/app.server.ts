@@ -117,14 +117,19 @@ const createServer = (params: CliParams = {}) => {
 }
 
 export const startServer = (params: CliParams = {}) => {
-  const { mcpPort = 8502 } = params || {};
+  // Default to loopback (127.0.0.1): without an explicit bind argument Express
+  // listens on 0.0.0.0, exposing /mcp to anyone on the same LAN (cafe WiFi,
+  // office, hotel) who can then drive every tool with whatever AEM credentials
+  // the server was launched with. Pass --bind 0.0.0.0 (or MCP_BIND=0.0.0.0)
+  // to opt back into all-interfaces explicitly.
+  const { mcpPort = 8502, bind = '127.0.0.1' } = params || {};
   const app = createServer(params);
-  app.listen(mcpPort, (error) => {
+  app.listen(mcpPort, bind, (error?: Error) => {
     if (error) {
       LOGGER.error('Failed to start server:', error);
       process.exit(1);
     }
-    LOGGER.log(`0. AEM MCP Server listening on port ${mcpPort}`);
+    LOGGER.log(`0. AEM MCP Server listening on ${bind}:${mcpPort}`);
   });
 };
 

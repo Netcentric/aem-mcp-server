@@ -6,4 +6,5 @@ export type CliParams = {
   secret?: string;
   mcpPort?: number;
   allowOrigin?: string[];
+  bind?: string;
 };
