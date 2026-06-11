@@ -24,6 +24,23 @@ MCP_USERNAME=foo MCP_PASSWORD=bar node dist/cli.js                     # gate /m
 
 `MCP_LOGGER=true` enables logging. Without it, `LOGGER` is a no-op — this is intentional (stdout must stay clean for MCP stdio clients; see `src/utils/logger.ts`).
 
+## Testing workflow
+
+When working on any item that has a `How to Test` block (e.g. each entry in
+`plan/mcp-cert-auth-implementation.md`), **run every test you can run from the
+terminal yourself**. That includes ad-hoc Node harnesses, `curl` against a
+locally-started server, port checks, etc. The repo has no test runner — write a
+one-off `.mjs` under `src/test/` when needed and run it.
+
+Show the results back to the user. Only ask the user to run a test manually
+when you genuinely cannot execute it from this session (e.g. browser-driven
+flows like the MCP Inspector UI, real-IMS / real-AEM tenants, OS-level signals
+across machines). When you do hand off, give **exact step-by-step commands**
+the user can paste — never "please verify X" without the recipe.
+
+Typecheck (`npm run build:types`) is necessary but not sufficient. Plan-
+specified runtime behaviour must actually be observed.
+
 ## Architecture
 
 The server is a Model Context Protocol (MCP) gateway that translates JSON-RPC tool calls into AEM HTTP operations (Sling/QueryBuilder/JCR). Request flow:
