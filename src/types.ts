@@ -5,4 +5,5 @@ export type CliParams = {
   id?: string;
   secret?: string;
   mcpPort?: number;
+  allowOrigin?: string[];
 };

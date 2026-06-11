@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { handleRequest } from '../mcp/mcp.server-handler.js';
 // import { useBasicAuth } from './app.auth.js';
@@ -7,12 +7,51 @@ import { config } from '../config.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
 
+// MCP spec MUST: validate Origin header to prevent DNS-rebinding attacks.
+// Defaults cover the official MCP Inspector (UI :6274, proxy :6277) on both
+// loopback hostnames. Extra origins via --allow-origin CLI flag or comma-
+// separated MCP_ALLOWED_ORIGINS env var. A loose regex like ^http://localhost(:\d+)?$
+// is NOT used: it would permit any other process bound to a local port to spoof
+// an Origin header and widen the rebinding attack surface.
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:6274',
+  'http://127.0.0.1:6274',
+  'http://localhost:6277',
+  'http://127.0.0.1:6277',
+];
+
+function buildOriginAllowlist(extra: string[] = []): Set<string> {
+  const fromEnv = (process.env.MCP_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return new Set<string>([...DEFAULT_ALLOWED_ORIGINS, ...fromEnv, ...extra]);
+}
+
 const createServer = (params: CliParams = {}) => {
   const app = express();
 
+  const allowedOrigins = buildOriginAllowlist(params.allowOrigin);
+
+  // Gate before cors(): a disallowed Origin returns HTTP 403 with a JSON-RPC
+  // -32600 (Invalid Request) body. Requests without an Origin header (CLI curl,
+  // server-to-server tooling) pass through — only browsers attach Origin.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = req.headers.origin;
+    if (typeof origin === 'string' && !allowedOrigins.has(origin)) {
+      res.status(403).json({
+        jsonrpc: '2.0',
+        error: { code: -32600, message: 'Origin not allowed' },
+        id: null,
+      });
+      return;
+    }
+    next();
+  });
+
   app.use(cors({
-    origin: '*', // Allow all origins - adjust as needed for production
-    exposedHeaders: ['Mcp-Session-Id']
+    origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)),
+    exposedHeaders: ['Mcp-Session-Id'],
   }));
   app.use(express.json());
   app.use(express.json({ limit: '10mb' }));
