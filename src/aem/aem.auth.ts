@@ -1,4 +1,6 @@
-const IMS_URL = "https://ims-na1.adobelogin.com/ims/token"; // Change region if needed
+// IMS endpoint defaults to NA. Override with AEM_IMS_URL for EMEA
+// (https://ims-eu1.adobelogin.com/ims/token) or APAC (https://ims-jp1.adobelogin.com/ims/token).
+const IMS_URL = process.env.AEM_IMS_URL || "https://ims-na1.adobelogin.com/ims/token";
 const SCOPES = "openid,AdobeID,read_organizations,additional_info.projectedProductContext,aem_author_read,aem_author_write";
 
 type AccessTokenResponse = {

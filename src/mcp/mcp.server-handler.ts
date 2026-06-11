@@ -6,6 +6,7 @@ import { transports } from './mcp.transports.js';
 import { createMCPServer } from './mcp.server.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
+import { redactCliParams } from '../utils/sanitize.js';
 
 export const handleRequest = async (req: Request, res: Response, cliParams: CliParams) => {
   LOGGER.log('1.Received MCP request:', req.body);
@@ -54,19 +55,22 @@ export const handleRequest = async (req: Request, res: Response, cliParams: CliP
       });
 
       // Connect the transport to the MCP server BEFORE handling the request
-      LOGGER.log('Connecting to MCP server with CLI params:', cliParams);
+      LOGGER.log('Connecting to MCP server with CLI params:', redactCliParams(cliParams));
       const server = createMCPServer(cliParams);
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
       return; // Already handled
     } else {
-      // Invalid request - no session ID or not initialization request
+      // MCP StreamableHTTP spec §6.3: unknown session-id MUST return 404 so
+      // that clients (e.g. MCP Inspector) detect the stale reference and
+      // trigger their auto-reinitialization loop. A 400 here would cause
+      // Inspector to display a generic error with no automatic recovery path.
       LOGGER.log('Invalid request - no session ID or not initialization request');
-      res.status(400).json({
+      res.status(404).json({
         jsonrpc: '2.0',
         error: {
-          code: -32000,
-          message: 'Bad Request: No valid session ID provided. Please re-initialize the MCP server.',
+          code: -32001,
+          message: 'Session not found. Please re-initialize the MCP server.',
         },
         id: null,
       });

@@ -1,4 +1,5 @@
 import { LOGGER } from '../utils/logger.js';
+import { sanitizeErrorMessage, summarizeAemBody } from '../utils/sanitize.js';
 
 export interface AEMErrorDetails {
   [key: string]: any;
@@ -60,44 +61,31 @@ export function createAEMError(
 export function handleAEMHttpError(error: any, operation: string): AEMOperationError {
   if (error.response) {
     const status = error.response.status;
-    const data = error.response.data;
+    const summary = summarizeAemBody(error.response.data);
     switch (status) {
       case 401:
-        return createAEMError(AEM_ERROR_CODES.AUTHENTICATION_FAILED, 'Authentication failed. Check AEM credentials.', { status, data });
+        return createAEMError(AEM_ERROR_CODES.AUTHENTICATION_FAILED, 'Authentication failed. Check AEM credentials.', { status, summary });
       case 403:
-        return createAEMError(AEM_ERROR_CODES.INSUFFICIENT_PERMISSIONS, 'Insufficient permissions for this operation.', { status, data, operation });
+        return createAEMError(AEM_ERROR_CODES.INSUFFICIENT_PERMISSIONS, 'Insufficient permissions for this operation.', { status, summary, operation });
       case 404:
-        return createAEMError(AEM_ERROR_CODES.RESOURCE_NOT_FOUND, 'Resource not found in AEM.', { status, data, operation });
+        return createAEMError(AEM_ERROR_CODES.RESOURCE_NOT_FOUND, 'Resource not found in AEM.', { status, summary, operation });
       case 429:
         const retryAfter = error.response.headers['retry-after'];
-        return createAEMError(AEM_ERROR_CODES.RATE_LIMITED, 'Rate limit exceeded. Please try again later.', { status, data }, true, retryAfter ? parseInt(retryAfter) * 1000 : 60000);
+        return createAEMError(AEM_ERROR_CODES.RATE_LIMITED, 'Rate limit exceeded. Please try again later.', { status, summary }, true, retryAfter ? parseInt(retryAfter) * 1000 : 60000);
       case 500:
       case 502:
       case 503:
-        return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, 'AEM system error. Please try again later.', { status, data }, true, 30000);
+        return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, 'AEM system error. Please try again later.', { status, summary }, true, 30000);
       default:
-        // Handle both string and object error data
-        let errorMsg = 'Unknown error';
-        if (typeof data === 'string' && data.trim().length > 0) {
-          try {
-            const parsed = JSON.parse(data);
-            errorMsg = parsed.message || JSON.stringify(parsed);
-          } catch {
-            errorMsg = data;
-          }
-        } else if (data && typeof data === 'object' && data.message) {
-          errorMsg = data.message;
-        } else if (data && typeof data === 'object') {
-          errorMsg = JSON.stringify(data);
-        }
-        return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, `HTTP ${status}: ${errorMsg}`, { status, data, operation });
+        return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, `HTTP ${status}: ${summary ?? 'Unknown error'}`, { status, summary, operation });
     }
   } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-    return createAEMError(AEM_ERROR_CODES.CONNECTION_FAILED, 'Cannot connect to AEM instance. Check host and network.', { originalError: error.message }, true, 5000);
+    return createAEMError(AEM_ERROR_CODES.CONNECTION_FAILED, 'Cannot connect to AEM instance. Check host and network.', { originalError: sanitizeErrorMessage(error.message) }, true, 5000);
   } else if (error.code === 'ETIMEDOUT') {
-    return createAEMError(AEM_ERROR_CODES.TIMEOUT, 'Request to AEM timed out.', { originalError: error.message }, true, 10000);
+    return createAEMError(AEM_ERROR_CODES.TIMEOUT, 'Request to AEM timed out.', { originalError: sanitizeErrorMessage(error.message) }, true, 10000);
   } else {
-    return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, `Unexpected error during ${operation}: ${error.message}`, { originalError: error.message });
+    const safeMsg = sanitizeErrorMessage(error.message);
+    return createAEMError(AEM_ERROR_CODES.SYSTEM_ERROR, `Unexpected error during ${operation}: ${safeMsg}`, { originalError: safeMsg });
   }
 }
 

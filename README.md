@@ -60,6 +60,14 @@ Options:
 For AEMaaCS, use the `clientId` and `clientSecret` for authentication. [More info](https://developer.adobe.com/developer-console/docs/guides/authentication/ServerToServerAuthentication/implementation).
 For self-hosted AEM use user/pass. The default credentials are `admin:admin`.
 
+#### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `MCP_LOGGER` | Set to `true` to enable diagnostic logging on stdout (off by default — required off for MCP stdio clients). |
+| `MCP_USERNAME` / `MCP_PASSWORD` | Optional HTTP Basic auth gate on `POST /mcp` (only active when both are set). |
+| `AEM_IMS_URL` | Override the Adobe IMS token endpoint. Defaults to `https://ims-na1.adobelogin.com/ims/token`. Set to `https://ims-eu1.adobelogin.com/ims/token` (EMEA) or `https://ims-jp1.adobelogin.com/ims/token` (APAC) for non-NA AEMaaCS tenants. |
+
 ### Example Command
 ```sh
 aem-mcp -u=user@domain.com -p=mypass -H=https://author-qa.domain.com

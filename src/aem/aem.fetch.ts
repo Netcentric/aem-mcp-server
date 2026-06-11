@@ -1,5 +1,6 @@
 import { getAccessToken } from './aem.auth.js';
 import { LOGGER } from '../utils/logger.js';
+import { sanitizeUrl, hasUrlCredentials } from '../utils/sanitize.js';
 
 export type AEMBasicAuth = {
   username: string;
@@ -32,17 +33,60 @@ export type AEMFetchConfig = {
 
 type FetchInstance = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Same-origin check for redirect handling: a redirect is treated as same-origin
+ * only when scheme + host + port all match. Unparseable inputs are treated as
+ * cross-origin (fail safer — strip credentials rather than risk leaking them).
+ */
+function isSameOrigin(from: string, to: string): boolean {
+  try {
+    return new URL(from).origin === new URL(to).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide whether a 401 response should trigger a token refresh + retry.
+ * Inspects the `WWW-Authenticate` header for an OAuth Bearer `error=` directive
+ * (RFC 6750). Retries are only useful for `invalid_token`/`expired_token`;
+ * `insufficient_scope`, `invalid_request`, `insufficient_user_authentication`
+ * cannot be solved by a fresh token, so we fail fast instead of burning a
+ * round-trip. Absence of the header or unknown error codes fall back to retry.
+ */
+function shouldRetryOn401(response: Response): boolean {
+  const wwwAuth = response.headers.get('WWW-Authenticate');
+  if (!wwwAuth) return true;
+  const match = wwwAuth.match(/error\s*=\s*"([^"]+)"|error\s*=\s*([^\s,]+)/i);
+  if (!match) return true;
+  const err = (match[1] || match[2]).toLowerCase();
+  if (err === 'invalid_token' || err === 'expired_token') return true;
+  if (
+    err === 'insufficient_scope' ||
+    err === 'invalid_request' ||
+    err === 'insufficient_user_authentication'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export class AEMFetch {
   private fetch: FetchInstance | null;
   private readonly config: AEMFetchConfig;
   private token: string;
   private tokenExpiry: number;
+  private inflightToken: Promise<string> | null;
 
   constructor(config: AEMFetchConfig) {
+    if (hasUrlCredentials(config.host)) {
+      throw new Error('AEM host URL must not contain embedded credentials. Pass them via username/password (Basic) or clientId/clientSecret (OAuth).');
+    }
     this.config = config;
     this.fetch = null;
     this.token = '';
     this.tokenExpiry = 0;
+    this.inflightToken = null;
   }
 
   /**
@@ -52,6 +96,16 @@ export class AEMFetch {
   async init() {
     this.token = await this.getAuthToken(this.config.auth);
     this.fetch = this.getFetchInstance();
+  }
+
+  /**
+   * True when the configured auth is OAuth Server-to-Server (clientId+secret),
+   * false when Basic (username+password). Refreshing the token is only useful
+   * for OAuth — for Basic, re-encoding the same credentials produces the same
+   * Base64, so a 401-retry is a wasted round-trip.
+   */
+  private get isOAuth(): boolean {
+    return !!this.config.auth.clientId && !this.config.auth.username;
   }
 
   /**
@@ -66,8 +120,7 @@ export class AEMFetch {
       
       // Always set Authorization (required for all requests)
       // Use Bearer for OAuth server-to-server, Basic for username/password
-      const isOAuth = this.config.auth.clientId && !this.config.auth.username;
-      if (isOAuth) {
+      if (this.isOAuth) {
         headers.set('Authorization', `Bearer ${this.token}`);
       } else {
         headers.set('Authorization', `Basic ${this.token}`);
@@ -96,15 +149,41 @@ export class AEMFetch {
       if (this.token && now < this.tokenExpiry) {
         return this.token;
       }
-      const token = await getAccessToken(config.clientId, config.clientSecret, config.scope);
-      this.token = token.access_token;
-      this.tokenExpiry = now + (token.expires_in - 60) * 1000;
-      return this.token;
+      // Dedup concurrent mints: if another caller has already kicked off the
+      // IMS request, ride on its promise instead of issuing a parallel mint.
+      // Without this, N concurrent post-expiry callers trigger N IMS calls.
+      if (this.inflightToken) {
+        return this.inflightToken;
+      }
+      this.inflightToken = (async () => {
+        try {
+          const token = await getAccessToken(config.clientId, config.clientSecret, config.scope);
+          // Reject expires_in <= 60: a value at-or-below the 60s headroom would place
+          // tokenExpiry in the past, forcing an IMS mint on every request. Single-flight
+          // dedups within a tick but still burns a round-trip per call. NaN/undefined
+          // fail this check too (NaN > 60 is false).
+          if (!(token.expires_in > 60)) {
+            throw new Error(
+              `IMS returned invalid expires_in (${token.expires_in}); must be > 60 seconds to leave refresh headroom.`
+            );
+          }
+          this.token = token.access_token;
+          this.tokenExpiry = now + (token.expires_in - 60) * 1000;
+          return this.token;
+        } finally {
+          this.inflightToken = null;
+        }
+      })();
+      return this.inflightToken;
     }
     
     // Basic Authentication (username/password)
     if (config.username && config.password) {
-      return Buffer.from(`${config.username}:${config.password}`).toString('base64');
+      // AEM Sling decodes Basic credentials as ISO-8859-1 (not UTF-8). Encoding the
+      // source as 'latin1' keeps ASCII identical while making 0x80-0xFF code points
+      // (é/ü/ñ/etc.) round-trip correctly. Passwords with code points > 0xFF still
+      // can't be expressed in Basic auth and are out of scope.
+      return Buffer.from(`${config.username}:${config.password}`, 'latin1').toString('base64');
     }
     
     throw new Error('No authentication credentials provided');
@@ -173,21 +252,38 @@ export class AEMFetch {
     // Explicitly set redirect to follow (default behavior, but making it explicit)
     options.redirect = options.redirect || 'follow';
     let response: Response;
+    let retryTimeoutId: NodeJS.Timeout | undefined;
     try {
       response = await this.fetch(url, options);
-      if (response.status === 401) {
-        LOGGER.warn(`AEM request to ${url} returned 401 Unauthorized. Attempting to refresh token...`);
+      if (response.status === 401 && this.isOAuth && shouldRetryOn401(response)) {
+        LOGGER.warn(`AEM request to ${sanitizeUrl(url)} returned 401 Unauthorized. Attempting to refresh token...`);
         await this.refreshAuthToken();
-        response = await this.fetch(url, options);
+        // Fresh timeout window for the retry: the original signal may already be aborted
+        // if the refresh took longer than the original `timeout`.
+        const retry = this.getTimeoutOptions(timeout);
+        retryTimeoutId = retry.timeoutId;
+        const retryOptions = timeout ? { ...options, signal: retry.signal } : options;
+        response = await this.fetch(url, retryOptions);
       }
       // Handle redirect status codes (300-399) - fetch should follow automatically, but log if it doesn't
       if (response.status >= 300 && response.status < 400 && !response.ok) {
         const location = response.headers.get('Location');
         if (location) {
-          LOGGER.warn(`Redirect detected (${response.status}) from ${url} to ${location}`);
-          // Follow the redirect manually if fetch didn't
           const redirectUrl = location.startsWith('http') ? location : `${this.config.host}${location}`;
-          response = await this.fetch(redirectUrl, { ...options, redirect: 'follow' });
+          const sameOrigin = isSameOrigin(url, redirectUrl);
+          LOGGER.warn(
+            `Redirect detected (${response.status}) from ${sanitizeUrl(url)} to ${sanitizeUrl(redirectUrl)}` +
+            (sameOrigin ? '' : ' (cross-origin: Authorization stripped)')
+          );
+          if (sameOrigin) {
+            response = await this.fetch(redirectUrl, { ...options, redirect: 'follow' });
+          } else {
+            // Cross-origin: do NOT use this.fetch (it would re-inject Authorization via
+            // getFetchInstance). Use bare fetch and explicitly drop any Authorization header.
+            const safeHeaders = new Headers(options.headers || {});
+            safeHeaders.delete('Authorization');
+            response = await fetch(redirectUrl, { ...options, headers: safeHeaders, redirect: 'follow' });
+          }
         }
       }
       if (!response.ok) {
@@ -259,6 +355,7 @@ export class AEMFetch {
       }
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      if (retryTimeoutId) clearTimeout(retryTimeoutId);
     }
   }
 
@@ -355,7 +452,8 @@ export class AEMFetch {
     if (timeout) {
       options.signal = signal;
     }
-    
+
+    let retryTimeoutId: NodeJS.Timeout | undefined;
     try {
       const response = await this.fetch(fullUrl, {
         ...options,
@@ -363,20 +461,27 @@ export class AEMFetch {
         body,
         headers
       });
-      
-      if (response.status === 401) {
+
+      if (response.status === 401 && this.isOAuth && shouldRetryOn401(response)) {
         await this.refreshAuthToken();
-        return await this.fetch(fullUrl, {
+        // Fresh timeout window for the retry: the original signal may already be aborted
+        // if the refresh took longer than the original `timeout`.
+        const retry = this.getTimeoutOptions(timeout);
+        retryTimeoutId = retry.timeoutId;
+        const retryInit: RequestInit = {
           ...options,
           method: 'POST',
           body,
-          headers: new Headers(headers)
-        });
+          headers: new Headers(headers),
+        };
+        if (timeout) retryInit.signal = retry.signal;
+        return await this.fetch(fullUrl, retryInit);
       }
-      
+
       return response;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      if (retryTimeoutId) clearTimeout(retryTimeoutId);
     }
   }
 }
