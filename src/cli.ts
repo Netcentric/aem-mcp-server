@@ -22,6 +22,11 @@ const argv: CliArgs = yargs(hideBin(process.argv)).options({
     default: process.env.MCP_BIND || '127.0.0.1',
     describe: 'host interface to bind (default 127.0.0.1, loopback-only). Use 0.0.0.0 to expose on the LAN. Env: MCP_BIND.',
   },
+  'shutdown-drain-seconds': {
+    type: 'number',
+    default: Number(process.env.MCP_SHUTDOWN_DRAIN_SECONDS) || 60,
+    describe: 'max seconds to wait for in-flight requests to finish on SIGINT/SIGTERM before forcing exit. Default 60s — must outlast worst-case bulk tool calls (see docs/BULK_OPERATIONS.md). Env: MCP_SHUTDOWN_DRAIN_SECONDS.',
+  },
   'allow-origin': {
     type: 'string',
     array: true,
@@ -39,10 +44,11 @@ if (argv.help) {
 
 const { host, user, pass, mcpPort, id, secret, bind } = argv;
 const allowOrigin = argv.allowOrigin ?? [];
+const shutdownDrainSeconds = argv.shutdownDrainSeconds ?? 60;
 
 if (host && hasUrlCredentials(host)) {
   console.error('Error: --host (-H) must not contain embedded credentials. Pass them via -u/-p (Basic) or -i/-s (OAuth) instead.');
   process.exit(1);
 }
 
-startServer({ host, user, pass, mcpPort, id, secret, allowOrigin, bind });
+startServer({ host, user, pass, mcpPort, id, secret, allowOrigin, bind, shutdownDrainSeconds });

@@ -7,4 +7,5 @@ export type CliParams = {
   mcpPort?: number;
   allowOrigin?: string[];
   bind?: string;
+  shutdownDrainSeconds?: number;
 };

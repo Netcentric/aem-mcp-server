@@ -6,6 +6,7 @@ import { AEMConnector } from '../aem/aem.connector.js';
 import { config } from '../config.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
+import { transports } from '../mcp/mcp.transports.js';
 
 // MCP spec MUST: validate Origin header to prevent DNS-rebinding attacks.
 // Defaults cover the official MCP Inspector (UI :6274, proxy :6277) on both
@@ -122,18 +123,109 @@ export const startServer = (params: CliParams = {}) => {
   // office, hotel) who can then drive every tool with whatever AEM credentials
   // the server was launched with. Pass --bind 0.0.0.0 (or MCP_BIND=0.0.0.0)
   // to opt back into all-interfaces explicitly.
-  const { mcpPort = 8502, bind = '127.0.0.1' } = params || {};
+  const { mcpPort = 8502, bind = '127.0.0.1', shutdownDrainSeconds = 60 } = params || {};
   const app = createServer(params);
-  app.listen(mcpPort, bind, (error?: Error) => {
+  const server = app.listen(mcpPort, bind, (error?: Error) => {
     if (error) {
       LOGGER.error('Failed to start server:', error);
       process.exit(1);
     }
     LOGGER.log(`0. AEM MCP Server listening on ${bind}:${mcpPort}`);
   });
-};
 
-process.on('SIGINT', async () => {
-  LOGGER.log('Shutting down server...');
-  process.exit(0);
-});
+  // Graceful drain on SIGINT/SIGTERM. The prior handler called process.exit(0)
+  // unconditionally, which dropped in-flight tool calls mid-flight — including
+  // multi-minute bulk operations (bulkUpdateComponents, bulkConvertComponents,
+  // see docs/BULK_OPERATIONS.md) where half-applied AEM mutations are worse
+  // than either a clean success or a clean rollback.
+  //
+  // Drain sequence (logs to stderr at each step — LOGGER is a no-op without
+  // MCP_LOGGER, but shutdown diagnostics must always be visible):
+  //   1. server.close()  -> stop accepting new connections
+  //   2. closeIdleConnections() -> drop keep-alive sockets between requests
+  //      so server.close()'s callback can fire without waiting for them
+  //   3. transports[].close() -> tear down MCP sessions
+  //   4. wait up to shutdownDrainSeconds for in-flight requests
+  //   5. process.exit(0)
+  let shuttingDown = false;
+  const drain = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const startedAt = Date.now();
+    process.stderr.write(
+      `[shutdown] ${signal} received — starting drain (max ${shutdownDrainSeconds}s)\n`
+    );
+
+    const forceExit = setTimeout(() => {
+      const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+      process.stderr.write(
+        `[shutdown] drain deadline reached after ${elapsed}s — abandoning pending requests, exiting 1\n`
+      );
+      // Exit non-zero so orchestrators (Kubernetes, systemd) can distinguish a
+      // forced timeout from a clean drain. A "0" here would tell the
+      // orchestrator everything was fine and suppress alerts even when a
+      // slow/stuck handler (or a hostile keep-open) prevented the drain from
+      // completing.
+      process.exit(1);
+    }, shutdownDrainSeconds * 1000);
+    // Don't keep the event loop alive solely for this timer — once server.close
+    // resolves and the process is otherwise idle, exit cleanly.
+    forceExit.unref();
+
+    server.close((err) => {
+      clearTimeout(forceExit);
+      const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
+      if (err) {
+        process.stderr.write(`[shutdown] server.close error: ${err.message}\n`);
+      }
+      process.stderr.write(`[shutdown] drain complete in ${elapsed}s — exit 0\n`);
+      process.exit(0);
+    });
+
+    // Drop keep-alive sockets between requests so the close() callback can
+    // resolve once active requests finish. Without this, idle keep-alives
+    // hold the server open until the OS times them out.
+    if (typeof server.closeIdleConnections === 'function') {
+      server.closeIdleConnections();
+    }
+
+    // Tear down MCP transports. Each transport may have open SSE streams or
+    // session state that needs explicit cleanup.
+    for (const [sessionId, transport] of Object.entries(transports)) {
+      try {
+        process.stderr.write(`[shutdown] closing transport ${sessionId}\n`);
+        transport.close();
+      } catch (e: any) {
+        process.stderr.write(
+          `[shutdown] error closing transport ${sessionId}: ${e?.message ?? e}\n`
+        );
+      }
+    }
+  };
+
+  process.on('SIGINT', () => drain('SIGINT'));
+  process.on('SIGTERM', () => drain('SIGTERM'));
+
+  // Fatal-error fallbacks. Node docs are explicit that the process is in an
+  // undefined state after `uncaughtException` — we MUST NOT try to resume
+  // normal work or run the full async drain. Do sync-only cleanup (close
+  // transports, write a stderr breadcrumb) and exit non-zero so the
+  // orchestrator restarts the container instead of leaving a half-dead pod.
+  const fatal = (kind: string, err: unknown) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const message =
+      err instanceof Error ? err.stack || err.message : String(err);
+    process.stderr.write(`[fatal] ${kind}: ${message}\n`);
+    for (const transport of Object.values(transports)) {
+      try {
+        transport.close();
+      } catch {
+        // best-effort sync cleanup; process state is already suspect
+      }
+    }
+    process.exit(1);
+  };
+  process.on('uncaughtException', (err) => fatal('uncaughtException', err));
+  process.on('unhandledRejection', (reason) => fatal('unhandledRejection', reason));
+};
