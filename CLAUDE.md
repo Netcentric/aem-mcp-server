@@ -24,6 +24,27 @@ MCP_USERNAME=foo MCP_PASSWORD=bar node dist/cli.js                     # gate /m
 
 `MCP_LOGGER=true` enables logging. Without it, `LOGGER` is a no-op — this is intentional (stdout must stay clean for MCP stdio clients; see `src/utils/logger.ts`).
 
+## Clarify before deciding
+
+Before taking any action that involves a real choice — credentials, destructive
+vs read-only, which approach to take, which environment to touch, what scope
+to cover — **ask the user first** with concrete options (use the
+AskUserQuestion tool when it's a short choice). Do not infer credentials,
+assume "the obvious" tool from a list, or default to a destructive path
+because it's listed in a plan.
+
+What counts as "a real choice":
+- Anything that mutates external state (a real AEM, a real database, a real
+  remote — even via a read-only-looking tool that might be misconfigured).
+- Anything where multiple plausible paths exist and the safe / fast / cheap
+  trade-off is not obvious from context.
+- Anything where the user hasn't given an explicit instruction in *this*
+  conversation and there's no durable preference in memory.
+
+What does NOT count: typechecking, running local terminal-only tests, reading
+files, writing to gitignored harnesses, recompiling. Take those without
+asking.
+
 ## Testing workflow
 
 When working on any item that has a `How to Test` block (e.g. each entry in
