@@ -1,4 +1,9 @@
-import { getAccessToken } from './aem.auth.js';
+import {
+  AuthStrategy,
+  BasicAuthStrategy,
+  OAuthStrategy,
+  createAuthStrategy,
+} from './aem.auth.js';
 import { LOGGER } from '../utils/logger.js';
 import { sanitizeUrl, hasUrlCredentials } from '../utils/sanitize.js';
 
@@ -74,7 +79,13 @@ function shouldRetryOn401(response: Response): boolean {
 export class AEMFetch {
   private fetch: FetchInstance | null;
   private readonly config: AEMFetchConfig;
+  private readonly strategy: AuthStrategy;
   private token: string;
+  // Retained for backwards-compatibility with the existing public method
+  // signatures and the smoke-test harness, which reaches into these fields
+  // directly. The canonical state lives inside the AuthStrategy (cached token,
+  // expiry, single-flight inflight promise); these are mirrors kept in sync by
+  // `getAuthToken()`. feat #2 removes them once the public surface narrows.
   private tokenExpiry: number;
   private inflightToken: Promise<string> | null;
 
@@ -83,6 +94,7 @@ export class AEMFetch {
       throw new Error('AEM host URL must not contain embedded credentials. Pass them via username/password (Basic) or clientId/clientSecret (OAuth).');
     }
     this.config = config;
+    this.strategy = createAuthStrategy(config.auth);
     this.fetch = null;
     this.token = '';
     this.tokenExpiry = 0;
@@ -105,7 +117,7 @@ export class AEMFetch {
    * Base64, so a 401-retry is a wasted round-trip.
    */
   private get isOAuth(): boolean {
-    return !!this.config.auth.clientId && !this.config.auth.username;
+    return this.strategy instanceof OAuthStrategy;
   }
 
   /**
@@ -143,55 +155,35 @@ export class AEMFetch {
   }
 
   async getAuthToken(config: AEMAuth): Promise<string> {
-    // OAuth Server-to-Server (client credentials)
+    // Delegate to the AuthStrategy chosen at construction time. Single-flight
+    // dedup, `expires_in > 60` guard, and Latin-1 base64 encoding all live
+    // inside the strategy classes (`src/aem/aem.auth.ts`). `config` is kept on
+    // the public signature for backwards-compatibility (smoke harness passes
+    // `fetcher['config'].auth`); the strategy was already bound to that same
+    // config in the constructor.
     if (config.clientId && config.clientSecret) {
-      const now = Date.now();
-      if (this.token && now < this.tokenExpiry) {
-        return this.token;
-      }
-      // Dedup concurrent mints: if another caller has already kicked off the
-      // IMS request, ride on its promise instead of issuing a parallel mint.
-      // Without this, N concurrent post-expiry callers trigger N IMS calls.
-      if (this.inflightToken) {
-        return this.inflightToken;
-      }
-      this.inflightToken = (async () => {
-        try {
-          const token = await getAccessToken(config.clientId, config.clientSecret, config.scope);
-          // Reject expires_in <= 60: a value at-or-below the 60s headroom would place
-          // tokenExpiry in the past, forcing an IMS mint on every request. Single-flight
-          // dedups within a tick but still burns a round-trip per call. NaN/undefined
-          // fail this check too (NaN > 60 is false).
-          if (!(token.expires_in > 60)) {
-            throw new Error(
-              `IMS returned invalid expires_in (${token.expires_in}); must be > 60 seconds to leave refresh headroom.`
-            );
-          }
-          this.token = token.access_token;
-          this.tokenExpiry = now + (token.expires_in - 60) * 1000;
-          return this.token;
-        } finally {
-          this.inflightToken = null;
-        }
-      })();
-      return this.inflightToken;
+      const token = await (this.strategy as OAuthStrategy).ensureToken();
+      this.token = token;
+      return token;
     }
-    
-    // Basic Authentication (username/password)
     if (config.username && config.password) {
-      // AEM Sling decodes Basic credentials as ISO-8859-1 (not UTF-8). Encoding the
-      // source as 'latin1' keeps ASCII identical while making 0x80-0xFF code points
-      // (é/ü/ñ/etc.) round-trip correctly. Passwords with code points > 0xFF still
-      // can't be expressed in Basic auth and are out of scope.
-      return Buffer.from(`${config.username}:${config.password}`, 'latin1').toString('base64');
+      const token = (this.strategy as BasicAuthStrategy).encodedToken;
+      this.token = token;
+      return token;
     }
-    
     throw new Error('No authentication credentials provided');
   }
 
   async refreshAuthToken() {
-    this.token = ''; // Reset token to force refresh
-    this.tokenExpiry = 0; // Reset expiry
+    // Delegate refresh to the strategy. For OAuth, this clears the cached
+    // token and triggers a fresh IMS mint (with single-flight dedup if another
+    // caller is already minting). For Basic, this is a noop — re-encoding the
+    // same credentials produces the same base64, so a 401-retry would be
+    // wasted; the OAuth-gated `isOAuth` branch in `request()` short-circuits
+    // before reaching here on Basic.
+    if (this.strategy.refresh) {
+      await this.strategy.refresh();
+    }
     this.token = await this.getAuthToken(this.config.auth);
   }
   /**
