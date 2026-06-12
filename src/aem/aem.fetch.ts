@@ -1,38 +1,10 @@
-import {
-  AuthStrategy,
-  BasicAuthStrategy,
-  OAuthStrategy,
-  createAuthStrategy,
-} from './aem.auth.js';
+import { AuthStrategy } from './aem.auth.js';
 import { LOGGER } from '../utils/logger.js';
 import { sanitizeUrl, hasUrlCredentials } from '../utils/sanitize.js';
 
-export type AEMBasicAuth = {
-  username: string;
-  password: string;
-  clientId?: undefined;
-  clientSecret?: undefined;
-  accessToken?: undefined;
-  refreshToken?: undefined;
-  redirectUri?: undefined;
-};
-
-export type AEMOAuthServerToServer = {
-  username?: undefined;
-  password?: undefined;
-  clientId: string;
-  clientSecret: string;
-  scope?: string | string[];
-  accessToken?: undefined;
-  refreshToken?: undefined;
-  redirectUri?: undefined;
-};
-
-export type AEMAuth = AEMBasicAuth | AEMOAuthServerToServer;
-
 export type AEMFetchConfig = {
   host: string;
-  auth: AEMAuth;
+  authStrategy: AuthStrategy;
   timeout?: number;
 }
 
@@ -80,111 +52,85 @@ export class AEMFetch {
   private fetch: FetchInstance | null;
   private readonly config: AEMFetchConfig;
   private readonly strategy: AuthStrategy;
-  private token: string;
-  // Retained for backwards-compatibility with the existing public method
-  // signatures and the smoke-test harness, which reaches into these fields
-  // directly. The canonical state lives inside the AuthStrategy (cached token,
-  // expiry, single-flight inflight promise); these are mirrors kept in sync by
-  // `getAuthToken()`. feat #2 removes them once the public surface narrows.
-  private tokenExpiry: number;
-  private inflightToken: Promise<string> | null;
 
   constructor(config: AEMFetchConfig) {
     if (hasUrlCredentials(config.host)) {
-      throw new Error('AEM host URL must not contain embedded credentials. Pass them via username/password (Basic) or clientId/clientSecret (OAuth).');
+      throw new Error('AEM host URL must not contain embedded credentials. Pass credentials via the AuthStrategy (BasicAuthStrategy / OAuthStrategy / CertAuthStrategy).');
     }
     this.config = config;
-    this.strategy = createAuthStrategy(config.auth);
+    this.strategy = config.authStrategy;
     this.fetch = null;
-    this.token = '';
-    this.tokenExpiry = 0;
-    this.inflightToken = null;
   }
 
   /**
-   * Initializes the fetch instance with authentication token.
-   * Must be called before making requests.
+   * Initializes the fetch instance. Triggers the strategy's `refresh()` once
+   * to prime any cached credentials (OAuth: mint IMS token; Basic: noop;
+   * Cert: read PEMs + build undici.Agent in feat #3). Must be called before
+   * making requests.
    */
   async init() {
-    this.token = await this.getAuthToken(this.config.auth);
+    if (this.strategy.refresh) {
+      await this.strategy.refresh();
+    }
     this.fetch = this.getFetchInstance();
   }
 
   /**
-   * True when the configured auth is OAuth Server-to-Server (clientId+secret),
-   * false when Basic (username+password). Refreshing the token is only useful
-   * for OAuth — for Basic, re-encoding the same credentials produces the same
-   * Base64, so a 401-retry is a wasted round-trip.
+   * Whether a 401 response should trigger a credential refresh + retry. Only
+   * strategies that implement `refresh()` participate (OAuth mints a new IMS
+   * token; Basic short-circuits because re-encoding the same credentials
+   * produces the same Base64; Cert handles rotation via SIGHUP/reload(), not
+   * 401-driven refresh — see feat #7).
    */
-  private get isOAuth(): boolean {
-    return this.strategy instanceof OAuthStrategy;
+  private get supportsRefreshOn401(): boolean {
+    return typeof this.strategy.refresh === 'function';
   }
 
   /**
-   * Returns a fetch instance with proper headers for AEM authentication.
+   * Returns a fetch instance that injects the strategy's headers on every
+   * request and, for cert-mode, attaches the strategy's `undici.Agent` as the
+   * fetch dispatcher.
    */
   private getFetchInstance(): FetchInstance {
-    return (input: RequestInfo, init: RequestInit = {}): Promise<Response> => {
-      // Work with existing headers - create new Headers object to avoid mutating the original
-      const headers = init.headers instanceof Headers 
-        ? new Headers(init.headers) 
+    return async (input: RequestInfo, init: RequestInit = {}): Promise<Response> => {
+      const headers = init.headers instanceof Headers
+        ? new Headers(init.headers)
         : new Headers(init.headers || {});
-      
-      // Always set Authorization (required for all requests)
-      // Use Bearer for OAuth server-to-server, Basic for username/password
-      if (this.isOAuth) {
-        headers.set('Authorization', `Bearer ${this.token}`);
-      } else {
-        headers.set('Authorization', `Basic ${this.token}`);
+
+      const authHeaders = await this.strategy.getHeaders();
+      for (const [k, v] of Object.entries(authHeaders)) {
+        headers.set(k, v);
       }
-      
-      // Only set default Accept header if not already set
+
       if (!headers.has('Accept')) {
         headers.set('Accept', 'application/json');
       }
-      
-      // Only set default Content-Type if not already set (form data will set it in post())
       if (!headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
       }
-      
-      // Create new options object with our headers, preserving other init properties
+
       const { headers: _, ...initWithoutHeaders } = init;
-      return fetch(input, { ...initWithoutHeaders, headers });
+      const fetchInit: RequestInit = { ...initWithoutHeaders, headers };
+      // CertAuthStrategy (feat #3) returns an undici.Agent; native fetch
+      // accepts it via the `dispatcher` field. `dispatcher` is not in the
+      // standard RequestInit, so cast through `any` at this single seam.
+      const agent = this.strategy.getAgent?.();
+      if (agent) {
+        (fetchInit as RequestInit & { dispatcher?: unknown }).dispatcher = agent;
+      }
+      return fetch(input, fetchInit);
     }
   }
 
-  async getAuthToken(config: AEMAuth): Promise<string> {
-    // Delegate to the AuthStrategy chosen at construction time. Single-flight
-    // dedup, `expires_in > 60` guard, and Latin-1 base64 encoding all live
-    // inside the strategy classes (`src/aem/aem.auth.ts`). `config` is kept on
-    // the public signature for backwards-compatibility (smoke harness passes
-    // `fetcher['config'].auth`); the strategy was already bound to that same
-    // config in the constructor.
-    if (config.clientId && config.clientSecret) {
-      const token = await (this.strategy as OAuthStrategy).ensureToken();
-      this.token = token;
-      return token;
-    }
-    if (config.username && config.password) {
-      const token = (this.strategy as BasicAuthStrategy).encodedToken;
-      this.token = token;
-      return token;
-    }
-    throw new Error('No authentication credentials provided');
-  }
-
+  /**
+   * Force a credential refresh. Called from `request()` on 401 (gated by
+   * `supportsRefreshOn401`) and exposed publicly so tests / external callers
+   * can trigger a refresh without going through a 401.
+   */
   async refreshAuthToken() {
-    // Delegate refresh to the strategy. For OAuth, this clears the cached
-    // token and triggers a fresh IMS mint (with single-flight dedup if another
-    // caller is already minting). For Basic, this is a noop — re-encoding the
-    // same credentials produces the same base64, so a 401-retry would be
-    // wasted; the OAuth-gated `isOAuth` branch in `request()` short-circuits
-    // before reaching here on Basic.
     if (this.strategy.refresh) {
       await this.strategy.refresh();
     }
-    this.token = await this.getAuthToken(this.config.auth);
   }
   /**
    * Returns timeout options for fetch requests, including AbortController and timeoutId.
@@ -247,7 +193,7 @@ export class AEMFetch {
     let retryTimeoutId: NodeJS.Timeout | undefined;
     try {
       response = await this.fetch(url, options);
-      if (response.status === 401 && this.isOAuth && shouldRetryOn401(response)) {
+      if (response.status === 401 && this.supportsRefreshOn401 && shouldRetryOn401(response)) {
         LOGGER.warn(`AEM request to ${sanitizeUrl(url)} returned 401 Unauthorized. Attempting to refresh token...`);
         await this.refreshAuthToken();
         // Fresh timeout window for the retry: the original signal may already be aborted
@@ -302,34 +248,34 @@ export class AEMFetch {
         error.response = { status: response.status, data: errorText || null };
         throw error;
       }
-      
+
       // Handle empty responses (common for DELETE operations)
       // 204 No Content or empty body should return null/empty object
       if (response.status === 204 || response.status === 200) {
         const contentType = response.headers.get('content-type') || '';
         const contentLength = response.headers.get('content-length');
-        
+
         // If it's a DELETE operation and no content, return empty object
         if (options.method === 'DELETE' && (!contentLength || contentLength === '0')) {
           return {};
         }
-        
+
         // If content-type is not JSON and no content, return empty object
         if (!contentType.includes('application/json') && (!contentLength || contentLength === '0')) {
           return {};
         }
       }
-      
+
       if (isHtml) {
         return response.text();
       }
-      
+
       // Check if response has content before parsing JSON
       const text = await response.text();
       if (!text || text.trim().length === 0) {
         return {};
       }
-      
+
       // Try to parse as JSON, but handle non-JSON responses gracefully
       try {
         return JSON.parse(text);
@@ -379,7 +325,7 @@ export class AEMFetch {
     const headers = options.headers instanceof Headers
       ? new Headers(options.headers)
       : new Headers(options.headers || {});
-    
+
     if (data instanceof URLSearchParams) {
       body = data;
       // Set Content-Type for form data - this must be set explicitly
@@ -391,7 +337,7 @@ export class AEMFetch {
         headers.set('Content-Type', 'application/json');
       }
     }
-    
+
     const fullUrl = this.buildUrlWithParams(url);
     // Remove headers from options to avoid conflicts, then set our merged headers
     const { headers: _, ...optionsWithoutHeaders } = options;
@@ -423,12 +369,12 @@ export class AEMFetch {
     if (!this.fetch) {
       throw new Error('AEMFetch not initialized. Call await init() before making requests.');
     }
-    
+
     let body: BodyInit;
     const headers = options.headers instanceof Headers
       ? new Headers(options.headers)
       : new Headers(options.headers || {});
-    
+
     if (data instanceof URLSearchParams) {
       body = data;
       headers.set('Content-Type', 'application/x-www-form-urlencoded');
@@ -438,7 +384,7 @@ export class AEMFetch {
         headers.set('Content-Type', 'application/json');
       }
     }
-    
+
     const fullUrl = this.buildUrlWithParams(url);
     const { timeoutId, signal } = this.getTimeoutOptions(timeout);
     if (timeout) {
@@ -454,7 +400,7 @@ export class AEMFetch {
         headers
       });
 
-      if (response.status === 401 && this.isOAuth && shouldRetryOn401(response)) {
+      if (response.status === 401 && this.supportsRefreshOn401 && shouldRetryOn401(response)) {
         await this.refreshAuthToken();
         // Fresh timeout window for the retry: the original signal may already be aborted
         // if the refresh took longer than the original `timeout`.
