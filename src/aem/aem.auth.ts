@@ -1,3 +1,8 @@
+import fs from 'node:fs';
+import tls from 'node:tls';
+import { Agent, Dispatcher } from 'undici';
+import { LOGGER } from '../utils/logger.js';
+
 // IMS endpoint defaults to NA. Override with AEM_IMS_URL for EMEA
 // (https://ims-eu1.adobelogin.com/ims/token) or APAC (https://ims-jp1.adobelogin.com/ims/token).
 const IMS_URL = process.env.AEM_IMS_URL || "https://ims-na1.adobelogin.com/ims/token";
@@ -79,22 +84,41 @@ export interface AuthStrategy {
   getHeaders(): Promise<Record<string, string>>;
 
   /**
-   * Optional undici Dispatcher (Agent) — only set by CertAuthStrategy for mTLS.
-   * Header-based strategies return undefined; the caller falls back to the
-   * default global Dispatcher. Typed loosely here to avoid pulling undici into
-   * the surface in feat #1; the concrete `undici.Dispatcher` lands with
-   * `CertAuthStrategy` in feat #3.
+   * Optional undici `Dispatcher` (Agent) — only set by `CertAuthStrategy` for
+   * mTLS. Header-based strategies return undefined; the caller falls back to
+   * the default global Dispatcher. Typed as `Dispatcher` from undici 7.x.
    */
-  getAgent?(): unknown | undefined;
+  getAgent?(): Dispatcher | undefined;
 
   /**
-   * Mint or re-mint credentials. Called by `AEMFetch.init()` and on 401 retry.
-   * Noop for BasicAuthStrategy (re-encoding the same credentials produces the
-   * same base64). For OAuthStrategy this resets the cached token and triggers
-   * a fresh IMS mint. For CertAuthStrategy this re-reads PEM files and rebuilds
-   * the Agent (added in feat #7).
+   * One-time idempotent setup. Called once by `AEMFetch.init()`. For
+   * `OAuthStrategy` this primes the token cache via the first IMS mint. For
+   * `CertAuthStrategy` (feat #3) this reads PEM files from disk, validates
+   * them, and builds the singleton `undici.Agent`. `BasicAuthStrategy` does
+   * not implement this — the encoded credential is computed in its
+   * constructor.
+   */
+  init?(): Promise<void>;
+
+  /**
+   * Force a credential refresh on 401. Only `OAuthStrategy` implements this
+   * (mint a fresh IMS token). `BasicAuthStrategy` deliberately does not — re-
+   * encoding the same credentials produces the same Base64, so a 401-retry is
+   * a wasted round-trip and the `request()` path short-circuits when
+   * `refresh` is undefined. `CertAuthStrategy` also does not implement this —
+   * mTLS cert rotation is SIGHUP-driven via `reload()` (feat #7), not 401-
+   * driven; re-reading the same PEM files on a TLS failure would burn disk
+   * I/O without changing the handshake material.
    */
   refresh?(): Promise<void>;
+
+  /**
+   * Release resources on shutdown. Only `CertAuthStrategy` implements this
+   * (destroy the cached `undici.Agent` socket pool, releasing keep-alive
+   * sockets ahead of `process.exit`). Called by the graceful drain path in
+   * `app.server.ts` (feat #6).
+   */
+  destroy?(): Promise<void>;
 }
 
 export class BasicAuthStrategy implements AuthStrategy {
@@ -139,6 +163,14 @@ export class OAuthStrategy implements AuthStrategy {
   async getHeaders(): Promise<Record<string, string>> {
     const token = await this.ensureToken();
     return { Authorization: `Bearer ${token}` };
+  }
+
+  /**
+   * Prime the token cache at startup. Idempotent — repeated calls with a
+   * valid cached token return immediately. Called by `AEMFetch.init()`.
+   */
+  async init(): Promise<void> {
+    await this.ensureToken();
   }
 
   /**
@@ -190,13 +222,182 @@ export class OAuthStrategy implements AuthStrategy {
   }
 }
 
+// ----------------------------------------------------------------------------
+// CertAuthStrategy — mTLS via client certificate handshake (feat #3)
+// ----------------------------------------------------------------------------
+//
+// The mTLS identity lives entirely in the TLS handshake; no `Authorization`
+// header is sent. `getAgent()` returns a cached `undici.Agent` (singleton,
+// built once in `init()`) whose `connect` options carry the cert/key/CA/
+// passphrase + `minVersion: 'TLSv1.2'`. AEMFetch passes that Agent to
+// Node's native `fetch` via the `dispatcher` field.
+//
+// Wiring CLI flags + factory selection lands in feat #4 / feat #5; in feat #3
+// the class is exported and instantiated directly by tests.
+
+export type CertAuthParams = {
+  /** Path to the client certificate PEM file. Read once in `init()`. */
+  certPath: string;
+  /** Path to the private key PEM file. Read once in `init()`. */
+  keyPath: string;
+  /** Optional path to a CA bundle PEM file (for self-signed AEM tenants). */
+  caPath?: string;
+  /**
+   * Optional passphrase for an encrypted private key. Per the cert-auth plan
+   * this is read ONLY from `AEM_KEY_PASSPHRASE` env var (never a CLI flag)
+   * to keep secrets out of `ps aux` — the wiring happens in feat #4.
+   */
+  passphrase?: string;
+};
+
+const MAX_PEM_BYTES = 1_048_576; // 1 MB; rejects accidental binary blobs / DoS
+const PEM_BEGIN_PREFIX = '-----BEGIN ';
+const ENCRYPTED_KEY_MARKER = '-----BEGIN ENCRYPTED PRIVATE KEY-----';
+
+export class CertAuthStrategy implements AuthStrategy {
+  private cachedAgent: Agent | null = null;
+  private readonly params: CertAuthParams;
+
+  constructor(params: CertAuthParams) {
+    if (!params.certPath || !params.keyPath) {
+      throw new Error('CertAuthStrategy requires both certPath and keyPath');
+    }
+    this.params = params;
+  }
+
+  /**
+   * Returns an empty header set — mTLS identity is carried by the TLS
+   * handshake material, not an `Authorization` header.
+   */
+  async getHeaders(): Promise<Record<string, string>> {
+    return {};
+  }
+
+  /**
+   * Returns the cached singleton `undici.Agent` built in `init()`. NEVER
+   * constructs a new Agent here — per-request Agent construction allocates a
+   * fresh keep-alive socket pool every call, leaking FDs until `ulimit -n` is
+   * exhausted (mcp-cert-auth-plan.md §"🔴 HIGH — undici.Agent mora biti
+   * keširani singleton").
+   */
+  getAgent(): Dispatcher | undefined {
+    return this.cachedAgent ?? undefined;
+  }
+
+  /**
+   * One-time setup: read + validate PEM files, build the singleton Agent.
+   * Safe to call only once per instance — repeated calls will rebuild the
+   * Agent and orphan the previous socket pool. The rotation path (feat #7)
+   * uses an explicit `reload()` with an atomic swap + 30s drain.
+   */
+  async init(): Promise<void> {
+    const { certPath, keyPath, caPath, passphrase } = this.params;
+
+    const cert = this.readAndGuardPem(certPath, 'cert');
+    const key = this.readAndGuardPem(keyPath, 'key');
+    const ca = caPath ? this.readAndGuardPem(caPath, 'CA') : undefined;
+
+    // Encrypted-key guard: detect `-----BEGIN ENCRYPTED PRIVATE KEY-----`
+    // before tls.createSecureContext throws an unreadable OpenSSL trace.
+    if (key.includes(ENCRYPTED_KEY_MARKER) && !passphrase) {
+      throw new Error('Encrypted PEM key requires AEM_KEY_PASSPHRASE env variable');
+    }
+
+    // Keypair consistency: cert and key must belong to the same pair.
+    // `tls.createSecureContext` throws synchronously on mismatch — re-throw
+    // with a sanitized message (no OpenSSL trace, no file paths).
+    try {
+      tls.createSecureContext({ cert, key, passphrase });
+    } catch {
+      throw new Error('Certificate and private key do not match (keypair mismatch)');
+    }
+
+    // World-readable key warning (defense-in-depth — not a hard reject so
+    // ephemeral CI/secret-mount scenarios continue to work).
+    try {
+      const mode = fs.statSync(keyPath).mode;
+      if ((mode & 0o004) !== 0) {
+        LOGGER.warn('Private key file is world-readable. Consider `chmod 600` for production deployments.');
+      }
+    } catch {
+      // already-failing readAndGuardPem would have surfaced this earlier
+    }
+
+    // Singleton Agent. `connect` is the tls.connect options bag; passing
+    // `minVersion: 'TLSv1.2'` explicitly because Node's default still allows
+    // TLS 1.0/1.1 in some build configurations — unacceptable for mTLS.
+    // NEVER set `rejectUnauthorized: false` (defeats the entire mTLS chain).
+    this.cachedAgent = new Agent({
+      connect: { cert, key, ca, passphrase, minVersion: 'TLSv1.2' },
+    });
+  }
+
+  /**
+   * Release the keep-alive socket pool. Called by the graceful drain path
+   * (feat #6) before `process.exit` so lingering connections don't confuse
+   * `lsof`-based leak detectors. Idempotent.
+   */
+  async destroy(): Promise<void> {
+    if (this.cachedAgent) {
+      await this.cachedAgent.destroy();
+      this.cachedAgent = null;
+    }
+  }
+
+  /**
+   * Read a PEM file with all defensive guards. Returns the file contents as
+   * a Buffer (binary-safe). Errors are sanitized to omit filesystem paths so
+   * they don't leak through `handleAEMHttpError` to MCP clients.
+   *
+   * Guards (in order — cheapest first):
+   *   1. Path traversal: reject any `..` segment in the user-supplied path
+   *      BEFORE `path.resolve` flattens it. `/etc/ssl/../shadow` would
+   *      otherwise silently resolve to `/etc/shadow`.
+   *   2. File size: reject > 1 MB (PEM bundles are well under 100 KB; a
+   *      multi-MB file is either an accident or a DoS attempt).
+   *   3. PEM format: first 64 bytes must start with `-----BEGIN ` — catches
+   *      binary blobs, plain text, and `echo not-pem > x.pem` mistakes.
+   */
+  private readAndGuardPem(p: string, kind: 'cert' | 'key' | 'CA'): Buffer {
+    const segments = p.split(/[/\\]/);
+    if (segments.includes('..')) {
+      throw new Error(`Path traversal detected in ${kind} path`);
+    }
+
+    let size: number;
+    try {
+      size = fs.statSync(p).size;
+    } catch {
+      throw new Error(`${kind} file not found or not readable`);
+    }
+
+    if (size > MAX_PEM_BYTES) {
+      throw new Error(`${kind} file too large (limit: 1 MB)`);
+    }
+
+    let buf: Buffer;
+    try {
+      buf = fs.readFileSync(p);
+    } catch {
+      throw new Error(`${kind} file not readable`);
+    }
+
+    const head = buf.subarray(0, 64).toString('utf8');
+    if (!head.startsWith(PEM_BEGIN_PREFIX)) {
+      throw new Error(`Not a PEM-encoded ${kind} file`);
+    }
+
+    return buf;
+  }
+}
+
 /**
  * Resolve which auth strategy to use based on supplied credentials.
  *   - `clientId` + `clientSecret` → `OAuthStrategy`
  *   - `username` + `password`     → `BasicAuthStrategy`
  *   - otherwise                   → throws
  *
- * CertAuthStrategy is added in feat #3 and slotted in at the top of the chain
+ * `CertAuthStrategy` is slotted in at the top of this chain in feat #5
  * (cert + key takes priority over OAuth).
  */
 export function createAuthStrategy(input: AuthFactoryInput): AuthStrategy {

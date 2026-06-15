@@ -1,3 +1,4 @@
+import type { Dispatcher } from 'undici';
 import { AuthStrategy } from './aem.auth.js';
 import { LOGGER } from '../utils/logger.js';
 import { sanitizeUrl, hasUrlCredentials } from '../utils/sanitize.js';
@@ -63,14 +64,14 @@ export class AEMFetch {
   }
 
   /**
-   * Initializes the fetch instance. Triggers the strategy's `refresh()` once
-   * to prime any cached credentials (OAuth: mint IMS token; Basic: noop;
-   * Cert: read PEMs + build undici.Agent in feat #3). Must be called before
-   * making requests.
+   * Initializes the fetch instance. Triggers the strategy's `init()` hook
+   * once to prime any cached credentials (OAuth: mint IMS token; Basic: noop;
+   * Cert: read PEM files + build undici.Agent — feat #3). Must be called
+   * before making requests.
    */
   async init() {
-    if (this.strategy.refresh) {
-      await this.strategy.refresh();
+    if (this.strategy.init) {
+      await this.strategy.init();
     }
     this.fetch = this.getFetchInstance();
   }
@@ -111,12 +112,12 @@ export class AEMFetch {
 
       const { headers: _, ...initWithoutHeaders } = init;
       const fetchInit: RequestInit = { ...initWithoutHeaders, headers };
-      // CertAuthStrategy (feat #3) returns an undici.Agent; native fetch
-      // accepts it via the `dispatcher` field. `dispatcher` is not in the
-      // standard RequestInit, so cast through `any` at this single seam.
-      const agent = this.strategy.getAgent?.();
-      if (agent) {
-        (fetchInit as RequestInit & { dispatcher?: unknown }).dispatcher = agent;
+      // CertAuthStrategy (feat #3) returns an undici.Dispatcher; Node's
+      // native fetch accepts it via the `dispatcher` field. `dispatcher` is
+      // not in the standard RequestInit, so widen the type at this seam.
+      const dispatcher = this.strategy.getAgent?.();
+      if (dispatcher) {
+        (fetchInit as RequestInit & { dispatcher?: Dispatcher }).dispatcher = dispatcher;
       }
       return fetch(input, fetchInit);
     }

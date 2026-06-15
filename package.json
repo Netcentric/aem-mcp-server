@@ -41,6 +41,7 @@
     "@modelcontextprotocol/sdk": "^1.17.3",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "undici": "7.27.2",
     "yargs": "^18.0.0"
   },
   "devDependencies": {
