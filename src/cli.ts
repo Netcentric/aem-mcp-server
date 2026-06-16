@@ -5,6 +5,7 @@ import { hideBin } from 'yargs/helpers';
 import { startServer } from './index.js';
 import { CliParams } from './types';
 import { hasUrlCredentials } from './utils/sanitize.js';
+import { CertParamsSchema } from './aem/aem.auth.schemas.js';
 
 type CliArgs = CliParams & {
   help?: boolean;
@@ -16,6 +17,20 @@ const argv: CliArgs = yargs(hideBin(process.argv)).options({
   pass: { type: 'string', default: 'admin', alias: 'p' },
   id: { type: 'string', default: '', alias: 'i', describe: 'clientId' },
   secret: { type: 'string', default: '', alias: 's', describe: 'clientSecret' },
+  cert: {
+    type: 'string',
+    alias: 'C',
+    describe: 'path to client certificate PEM file for mTLS to AEM. Env: AEM_CERT_PATH.',
+  },
+  key: {
+    type: 'string',
+    alias: 'k',
+    describe: 'path to private key PEM file for mTLS to AEM. Env: AEM_KEY_PATH.',
+  },
+  ca: {
+    type: 'string',
+    describe: 'path to CA bundle PEM file (only needed for self-signed AEM tenants). Env: AEM_CA_PATH.',
+  },
   mcpPort: { type: 'number', default: 8502, alias: 'm' },
   bind: {
     type: 'string',
@@ -51,4 +66,43 @@ if (host && hasUrlCredentials(host)) {
   process.exit(1);
 }
 
-startServer({ host, user, pass, mcpPort, id, secret, allowOrigin, bind, shutdownDrainSeconds });
+// Cert-auth params. Flags take precedence over env vars; `??` only falls
+// through on null/undefined so an empty `--cert ""` reaches the schema and
+// gets rejected by `.min(1)` (instead of being silently coerced to "no cert
+// provided"). `passphrase` is env-only — no CLI flag — to keep the secret
+// out of `ps aux`.
+const certInput = {
+  cert: argv.cert ?? process.env.AEM_CERT_PATH ?? undefined,
+  key: argv.key ?? process.env.AEM_KEY_PATH ?? undefined,
+  ca: argv.ca ?? process.env.AEM_CA_PATH ?? undefined,
+  passphrase: process.env.AEM_KEY_PASSPHRASE || undefined,
+};
+
+const certValidation = CertParamsSchema.safeParse(certInput);
+if (!certValidation.success) {
+  // One-line sanitized error. NEVER echo `issue.received` — a malformed
+  // passphrase value would leak into stderr / CI logs.
+  const issue = certValidation.error.issues[0];
+  const pathSeg = issue?.path?.[0];
+  const label = typeof pathSeg === 'string' && pathSeg.length > 0 ? `--${pathSeg}` : 'cert-auth';
+  console.error(`Error: ${label}: ${issue?.message ?? 'validation failed'}`);
+  process.exit(1);
+}
+
+const { cert, key, ca, passphrase } = certValidation.data;
+
+startServer({
+  host,
+  user,
+  pass,
+  mcpPort,
+  id,
+  secret,
+  cert,
+  key,
+  ca,
+  passphrase,
+  allowOrigin,
+  bind,
+  shutdownDrainSeconds,
+});
