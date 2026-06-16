@@ -74,6 +74,10 @@ export type AuthFactoryInput = {
   clientId?: string;
   clientSecret?: string;
   scope?: string | string[];
+  certPath?: string;
+  keyPath?: string;
+  caPath?: string;
+  passphrase?: string;
 };
 
 export interface AuthStrategy {
@@ -393,14 +397,34 @@ export class CertAuthStrategy implements AuthStrategy {
 
 /**
  * Resolve which auth strategy to use based on supplied credentials.
+ *   - `certPath` + `keyPath`      → `CertAuthStrategy` (highest priority)
  *   - `clientId` + `clientSecret` → `OAuthStrategy`
  *   - `username` + `password`     → `BasicAuthStrategy`
  *   - otherwise                   → throws
  *
- * `CertAuthStrategy` is slotted in at the top of this chain in feat #5
- * (cert + key takes priority over OAuth).
+ * Conflict resolution: if cert + key are supplied alongside OAuth credentials
+ * (either `clientId` or `clientSecret`), cert-auth wins and a warning is
+ * logged so the operator knows the OAuth params were ignored. We deliberately
+ * do NOT warn for cert + Basic because Basic credentials default to
+ * `admin/admin` from yargs — we can't distinguish "explicit" from "default"
+ * without threading additional metadata through the API, and the noise would
+ * cost more than the signal.
  */
 export function createAuthStrategy(input: AuthFactoryInput): AuthStrategy {
+  if (input.certPath && input.keyPath) {
+    if (input.clientId || input.clientSecret) {
+      LOGGER.warn(
+        'Both cert-auth (--cert/--key) and OAuth (--id/--secret) credentials supplied. ' +
+        'Cert-auth takes priority; OAuth params will be ignored.'
+      );
+    }
+    return new CertAuthStrategy({
+      certPath: input.certPath,
+      keyPath: input.keyPath,
+      caPath: input.caPath,
+      passphrase: input.passphrase,
+    });
+  }
   if (input.clientId && input.clientSecret) {
     return new OAuthStrategy(input.clientId, input.clientSecret, input.scope);
   }

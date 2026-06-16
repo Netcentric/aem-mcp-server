@@ -62,14 +62,19 @@ export class AEMConnector {
   }
 
   loadConfig(params: CliParams = {}): AEMConnectorConfig {
-    // Auth-strategy factory: OAuth (`-i/-s`) > Basic (`-u/-p`, defaults
-    // admin/admin). CertAuthStrategy slots in at the top of this chain when
-    // feat #3/#5 land.
-    const authStrategy: AuthStrategy = createAuthStrategy(
-      params.id && params.secret
-        ? { clientId: params.id, clientSecret: params.secret }
-        : { username: params.user || 'admin', password: params.pass || 'admin' }
-    );
+    // Auth-strategy factory chain (feat #5): cert+key > OAuth > Basic.
+    // Pass all credential candidates; the factory selects and logs a conflict
+    // warning if cert and OAuth params are both supplied.
+    const authStrategy: AuthStrategy = createAuthStrategy({
+      username: params.user || 'admin',
+      password: params.pass || 'admin',
+      clientId: params.id || undefined,
+      clientSecret: params.secret || undefined,
+      certPath: params.cert,
+      keyPath: params.key,
+      caPath: params.ca,
+      passphrase: params.passphrase,
+    });
 
     return {
       aem: {
