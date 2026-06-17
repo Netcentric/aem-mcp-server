@@ -258,6 +258,17 @@ const MAX_PEM_BYTES = 1_048_576; // 1 MB; rejects accidental binary blobs / DoS
 const PEM_BEGIN_PREFIX = '-----BEGIN ';
 const ENCRYPTED_KEY_MARKER = '-----BEGIN ENCRYPTED PRIVATE KEY-----';
 
+// Module-level registry of live `CertAuthStrategy` instances (feat #6). The
+// per-session architecture in `mcp.server-handler.ts` creates one AEMConnector
+// per MCP session, plus one global connector in `app.server.ts` for /health —
+// so a single process holds N strategies, not one. The registry lets the
+// graceful-drain path (`app.server.ts`) destroy all of them on SIGINT/SIGTERM
+// without coupling shutdown to session bookkeeping. Instances self-register
+// at the end of `init()` (after the Agent is built) and self-unregister in
+// `destroy()`. The set is intentionally private to this module — callers go
+// through `destroyAllCertStrategies()`.
+const liveCertStrategies: Set<CertAuthStrategy> = new Set();
+
 export class CertAuthStrategy implements AuthStrategy {
   private cachedAgent: Agent | null = null;
   private readonly params: CertAuthParams;
@@ -334,18 +345,24 @@ export class CertAuthStrategy implements AuthStrategy {
     this.cachedAgent = new Agent({
       connect: { cert, key, ca, passphrase, minVersion: 'TLSv1.2' },
     });
+
+    // Register only after the Agent is built — a failed init() must not
+    // leave a half-initialized strategy in the registry.
+    liveCertStrategies.add(this);
   }
 
   /**
    * Release the keep-alive socket pool. Called by the graceful drain path
    * (feat #6) before `process.exit` so lingering connections don't confuse
-   * `lsof`-based leak detectors. Idempotent.
+   * `lsof`-based leak detectors. Idempotent — repeated calls are no-ops and
+   * the unregister step uses `Set.delete` which is itself idempotent.
    */
   async destroy(): Promise<void> {
     if (this.cachedAgent) {
       await this.cachedAgent.destroy();
       this.cachedAgent = null;
     }
+    liveCertStrategies.delete(this);
   }
 
   /**
@@ -393,6 +410,24 @@ export class CertAuthStrategy implements AuthStrategy {
 
     return buf;
   }
+}
+
+/**
+ * Destroy every live `CertAuthStrategy` registered in this process. Called
+ * from the graceful drain path in `app.server.ts` (feat #6) so cached
+ * `undici.Agent` socket pools release before `process.exit`. Returns the
+ * number of strategies destroyed so the drain logger can report it.
+ *
+ * Errors inside a single `destroy()` are swallowed (best-effort) — one
+ * stuck Agent must not prevent the others from cleaning up. The drain path
+ * additionally races this call against a small budget to bound total time.
+ */
+export async function destroyAllCertStrategies(): Promise<number> {
+  const snapshot = Array.from(liveCertStrategies);
+  await Promise.all(
+    snapshot.map((s) => s.destroy().catch(() => { /* best-effort */ }))
+  );
+  return snapshot.length;
 }
 
 /**

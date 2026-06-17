@@ -3,10 +3,18 @@ import cors from 'cors';
 import { handleRequest } from '../mcp/mcp.server-handler.js';
 // import { useBasicAuth } from './app.auth.js';
 import { AEMConnector } from '../aem/aem.connector.js';
+import { destroyAllCertStrategies } from '../aem/aem.auth.js';
 import { config } from '../config.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
 import { transports } from '../mcp/mcp.transports.js';
+
+// Cap on how long we wait for `destroyAllCertStrategies()` during shutdown
+// (feat #6). The undici Agent's `destroy()` is normally near-instant — it
+// just closes the keep-alive socket pool — but a stuck socket or hostile
+// peer could otherwise hang the process past the drain deadline. 5s is plenty
+// for real shutdowns and short enough to keep `kill -INT` responsive.
+const CERT_DESTROY_TIMEOUT_MS = 5_000;
 
 // MCP spec MUST: validate Origin header to prevent DNS-rebinding attacks.
 // Defaults cover the official MCP Inspector (UI :6274, proxy :6277) on both
@@ -172,11 +180,35 @@ export const startServer = (params: CliParams = {}) => {
     // resolves and the process is otherwise idle, exit cleanly.
     forceExit.unref();
 
-    server.close((err) => {
+    server.close(async (err) => {
       clearTimeout(forceExit);
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
       if (err) {
         process.stderr.write(`[shutdown] server.close error: ${err.message}\n`);
+      }
+      // Cert-mode hook (feat #6): release any cached undici.Agent keep-alive
+      // socket pools so they don't linger past process.exit. No-op when the
+      // active strategies are Basic/OAuth (registry empty → count 0). Bounded
+      // by CERT_DESTROY_TIMEOUT_MS so a stuck Agent can't hang the process.
+      try {
+        const destroyed = await Promise.race<number>([
+          destroyAllCertStrategies(),
+          new Promise<number>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`cert destroy timeout (${CERT_DESTROY_TIMEOUT_MS}ms)`)),
+              CERT_DESTROY_TIMEOUT_MS
+            )
+          ),
+        ]);
+        if (destroyed > 0) {
+          process.stderr.write(
+            `[shutdown] destroyed ${destroyed} cert-auth agent pool(s)\n`
+          );
+        }
+      } catch (e: any) {
+        process.stderr.write(
+          `[shutdown] cert-auth destroy error: ${e?.message ?? e}\n`
+        );
       }
       process.stderr.write(`[shutdown] drain complete in ${elapsed}s — exit 0\n`);
       process.exit(0);
