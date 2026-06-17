@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import tls from 'node:tls';
+import crypto from 'node:crypto';
 import { Agent, Dispatcher } from 'undici';
 import { LOGGER } from '../utils/logger.js';
 
@@ -266,11 +267,23 @@ const ENCRYPTED_KEY_MARKER = '-----BEGIN ENCRYPTED PRIVATE KEY-----';
 // without coupling shutdown to session bookkeeping. Instances self-register
 // at the end of `init()` (after the Agent is built) and self-unregister in
 // `destroy()`. The set is intentionally private to this module — callers go
-// through `destroyAllCertStrategies()`.
+// through `destroyAllCertStrategies()` / `reloadAllCertStrategies()`.
 const liveCertStrategies: Set<CertAuthStrategy> = new Set();
+
+// Old-Agent drain window during a cert reload (feat #7). The fresh Agent
+// takes new requests immediately after the atomic swap, but in-flight
+// requests started on the old Agent need a grace period to finish before
+// we destroy() it. 30s mirrors the plan and matches typical AEM read
+// latencies while staying well under the leak #17 shutdown drain (60s).
+const RELOAD_OLD_AGENT_DRAIN_MS = 30_000;
 
 export class CertAuthStrategy implements AuthStrategy {
   private cachedAgent: Agent | null = null;
+  // SHA-256 of the current cert PEM (hex). Set in `init()`/`reload()` so
+  // `reload()` can log the old → new transition without re-reading the file
+  // a second time just to fingerprint it. Public-readable for tests; the
+  // value is non-sensitive (a public-key hash) so leakage is harmless.
+  certFingerprint: string = '';
   private readonly params: CertAuthParams;
 
   constructor(params: CertAuthParams) {
@@ -345,10 +358,85 @@ export class CertAuthStrategy implements AuthStrategy {
     this.cachedAgent = new Agent({
       connect: { cert, key, ca, passphrase, minVersion: 'TLSv1.2' },
     });
+    this.certFingerprint = sha256Hex(cert);
 
     // Register only after the Agent is built — a failed init() must not
     // leave a half-initialized strategy in the registry.
     liveCertStrategies.add(this);
+  }
+
+  /**
+   * Re-read PEM material and atomically swap the cached Agent (feat #7).
+   * Used for rotation when the on-disk certs have been replaced (cert-
+   * manager, Vault) — operators trigger via SIGHUP, or the optional mtime
+   * poll detects the mtime change.
+   *
+   * Sequence:
+   *   1. Re-read PEMs through `readAndGuardPem` (same path-traversal / 1 MB
+   *      / BEGIN-prefix guards as `init()`).
+   *   2. Detect encrypted-key marker; require passphrase.
+   *   3. `tls.createSecureContext` to validate the keypair BEFORE building a
+   *      new Agent — if the new material is broken, throw and leave the old
+   *      Agent untouched (no broken state).
+   *   4. Build the new Agent.
+   *   5. Atomic swap (single JS assignment is atomic — JS is single-threaded).
+   *   6. Update `certFingerprint`.
+   *   7. Log the old → new fingerprint transition.
+   *   8. After `RELOAD_OLD_AGENT_DRAIN_MS` (30s), destroy the old Agent so
+   *      its keep-alive sockets close. Fire-and-forget — the new Agent is
+   *      already serving new requests, and the destroy timer does not block
+   *      `reload()` from returning.
+   *
+   * Returns the new fingerprint (caller can correlate logs).
+   */
+  async reload(): Promise<{ oldFingerprint: string; newFingerprint: string }> {
+    if (!this.cachedAgent) {
+      throw new Error('CertAuthStrategy.reload() called before init()');
+    }
+
+    const { certPath, keyPath, caPath, passphrase } = this.params;
+
+    // Step 1–3: read + validate. Throws on bad material; old Agent stays.
+    const cert = this.readAndGuardPem(certPath, 'cert');
+    const key = this.readAndGuardPem(keyPath, 'key');
+    const ca = caPath ? this.readAndGuardPem(caPath, 'CA') : undefined;
+    if (key.includes(ENCRYPTED_KEY_MARKER) && !passphrase) {
+      throw new Error('Encrypted PEM key requires AEM_KEY_PASSPHRASE env variable');
+    }
+    try {
+      tls.createSecureContext({ cert, key, passphrase });
+    } catch {
+      throw new Error('Certificate and private key do not match (keypair mismatch)');
+    }
+
+    // Step 4–6: build new, swap, fingerprint. Capture old refs FIRST so a
+    // concurrent reload that overlapping JS-tick-scheduled the same swap
+    // can't lose the previous Agent.
+    const oldAgent = this.cachedAgent;
+    const oldFingerprint = this.certFingerprint;
+    const newAgent = new Agent({
+      connect: { cert, key, ca, passphrase, minVersion: 'TLSv1.2' },
+    });
+    const newFingerprint = sha256Hex(cert);
+    this.cachedAgent = newAgent;
+    this.certFingerprint = newFingerprint;
+
+    // Step 7: log. Stderr (unconditional) — rotation must be visible even
+    // without MCP_LOGGER. SHA-256 of a cert is a public artifact; safe to log.
+    process.stderr.write(
+      `[cert-reload] strategy reloaded: SHA256(old)=${shortHash(oldFingerprint)} → SHA256(new)=${shortHash(newFingerprint)}\n`
+    );
+
+    // Step 8: schedule old-Agent destroy after drain window. unref() so the
+    // timer alone doesn't keep the process alive on shutdown — if SIGINT
+    // fires within the 30s window, the drain path (feat #6) will destroy
+    // the new Agent and the OS will reclaim the old one's sockets.
+    const t = setTimeout(() => {
+      oldAgent.destroy().catch(() => { /* best effort */ });
+    }, RELOAD_OLD_AGENT_DRAIN_MS);
+    t.unref();
+
+    return { oldFingerprint, newFingerprint };
   }
 
   /**
@@ -413,6 +501,24 @@ export class CertAuthStrategy implements AuthStrategy {
 }
 
 /**
+ * SHA-256 of a buffer as a lowercase hex string. Used for cert fingerprint
+ * logging in `init()` and `reload()`.
+ */
+function sha256Hex(buf: Buffer): string {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/**
+ * Truncate a hex fingerprint for log readability — full 64-hex digest is
+ * noisy; first 16 chars (64 bits) is still uniquely identifying for any
+ * realistic cert population. Operators who need the full value can grep
+ * the cert file with `openssl x509 -fingerprint -sha256 -noout -in cert.pem`.
+ */
+function shortHash(hex: string): string {
+  return hex.slice(0, 16);
+}
+
+/**
  * Destroy every live `CertAuthStrategy` registered in this process. Called
  * from the graceful drain path in `app.server.ts` (feat #6) so cached
  * `undici.Agent` socket pools release before `process.exit`. Returns the
@@ -428,6 +534,34 @@ export async function destroyAllCertStrategies(): Promise<number> {
     snapshot.map((s) => s.destroy().catch(() => { /* best-effort */ }))
   );
   return snapshot.length;
+}
+
+/**
+ * Reload every live `CertAuthStrategy` registered in this process (feat #7).
+ * Called from the SIGHUP handler and from the optional mtime poll in
+ * `app.server.ts`. Returns the count of successful reloads and a list of any
+ * errors so the caller can log per-strategy failures without aborting the
+ * whole rotation.
+ *
+ * If a single strategy's reload throws (bad PEM, keypair mismatch on the
+ * refreshed material, etc.), that strategy keeps its OLD Agent — no broken
+ * state. Other strategies still get reloaded.
+ */
+export async function reloadAllCertStrategies(): Promise<{ reloaded: number; errors: string[] }> {
+  const snapshot = Array.from(liveCertStrategies);
+  const errors: string[] = [];
+  let reloaded = 0;
+  await Promise.all(
+    snapshot.map(async (s) => {
+      try {
+        await s.reload();
+        reloaded += 1;
+      } catch (e: any) {
+        errors.push(e?.message ?? String(e));
+      }
+    })
+  );
+  return { reloaded, errors };
 }
 
 /**

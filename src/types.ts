@@ -8,6 +8,7 @@ export type CliParams = {
   key?: string;
   ca?: string;
   passphrase?: string;
+  certWatchIntervalMin?: number;
   mcpPort?: number;
   allowOrigin?: string[];
   bind?: string;

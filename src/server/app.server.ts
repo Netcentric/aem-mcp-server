@@ -1,9 +1,10 @@
+import fs from 'node:fs';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { handleRequest } from '../mcp/mcp.server-handler.js';
 // import { useBasicAuth } from './app.auth.js';
 import { AEMConnector } from '../aem/aem.connector.js';
-import { destroyAllCertStrategies } from '../aem/aem.auth.js';
+import { destroyAllCertStrategies, reloadAllCertStrategies } from '../aem/aem.auth.js';
 import { config } from '../config.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
@@ -237,6 +238,71 @@ export const startServer = (params: CliParams = {}) => {
 
   process.on('SIGINT', () => drain('SIGINT'));
   process.on('SIGTERM', () => drain('SIGTERM'));
+
+  // Cert rotation hook (feat #7). SIGHUP triggers a reload of every live
+  // CertAuthStrategy: re-read PEMs, atomic Agent swap, 30s drain on the old
+  // Agent. Stderr-only (unconditional) so SREs see the transition without
+  // needing MCP_LOGGER. No-op when no cert-mode strategy is active.
+  const onSighup = async () => {
+    if (shuttingDown) return;
+    process.stderr.write('[cert-reload] SIGHUP received — reloading cert-auth strategies\n');
+    try {
+      const { reloaded, errors } = await reloadAllCertStrategies();
+      if (reloaded === 0 && errors.length === 0) {
+        process.stderr.write('[cert-reload] no cert-auth strategies live; nothing to reload\n');
+      } else if (reloaded > 0) {
+        process.stderr.write(`[cert-reload] reloaded ${reloaded} cert-auth strategy(ies)\n`);
+      }
+      for (const err of errors) {
+        process.stderr.write(`[cert-reload] error: ${err}\n`);
+      }
+    } catch (e: any) {
+      process.stderr.write(`[cert-reload] fatal error: ${e?.message ?? e}\n`);
+    }
+  };
+  process.on('SIGHUP', () => { void onSighup(); });
+
+  // Optional mtime polling. When --cert-watch-interval-min N is non-zero AND
+  // a cert path was supplied, poll cert mtime every N minutes; on change,
+  // trigger the same reload flow as SIGHUP. setInterval.unref() so the timer
+  // alone doesn't keep the process alive on shutdown.
+  const watchMinutes = params?.certWatchIntervalMin ?? 0;
+  const certPath = params?.cert;
+  if (watchMinutes > 0 && certPath) {
+    let lastMtimeMs: number;
+    try {
+      lastMtimeMs = fs.statSync(certPath).mtimeMs;
+    } catch (e: any) {
+      // The cert path was already validated by CertAuthStrategy.init() at
+      // boot; a stat failure here is unusual. Log and skip the watcher
+      // rather than crashing.
+      process.stderr.write(`[cert-watch] cannot stat cert path at boot — watcher disabled\n`);
+      return;
+    }
+    const intervalMs = watchMinutes * 60_000;
+    process.stderr.write(
+      `[cert-watch] watching cert mtime every ${watchMinutes} minute(s)\n`
+    );
+    const watchTimer = setInterval(async () => {
+      if (shuttingDown) return;
+      let currentMtimeMs: number;
+      try {
+        currentMtimeMs = fs.statSync(certPath).mtimeMs;
+      } catch (e: any) {
+        process.stderr.write(`[cert-watch] stat error: ${e?.message ?? e}\n`);
+        return;
+      }
+      if (currentMtimeMs !== lastMtimeMs) {
+        process.stderr.write(
+          `[cert-watch] cert mtime changed (was ${new Date(lastMtimeMs).toISOString()}, ` +
+          `now ${new Date(currentMtimeMs).toISOString()}) — reloading\n`
+        );
+        lastMtimeMs = currentMtimeMs;
+        await onSighup();
+      }
+    }, intervalMs);
+    watchTimer.unref();
+  }
 
   // Fatal-error fallbacks. Node docs are explicit that the process is in an
   // undefined state after `uncaughtException` — we MUST NOT try to resume

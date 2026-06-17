@@ -31,6 +31,11 @@ const argv: CliArgs = yargs(hideBin(process.argv)).options({
     type: 'string',
     describe: 'path to CA bundle PEM file (only needed for self-signed AEM tenants). Env: AEM_CA_PATH.',
   },
+  'cert-watch-interval-min': {
+    type: 'number',
+    default: Number(process.env.AEM_CERT_WATCH_INTERVAL_MIN) || 0,
+    describe: 'periodically check the cert file mtime every N minutes; on change, reload PEMs and rebuild the undici.Agent (rotation without restart). 0 disables (default). SIGHUP still works regardless. Env: AEM_CERT_WATCH_INTERVAL_MIN.',
+  },
   mcpPort: { type: 'number', default: 8502, alias: 'm' },
   bind: {
     type: 'string',
@@ -91,6 +96,8 @@ if (!certValidation.success) {
 
 const { cert, key, ca, passphrase } = certValidation.data;
 
+const certWatchIntervalMin = argv.certWatchIntervalMin ?? 0;
+
 startServer({
   host,
   user,
@@ -102,6 +109,7 @@ startServer({
   key,
   ca,
   passphrase,
+  certWatchIntervalMin,
   allowOrigin,
   bind,
   shutdownDrainSeconds,
