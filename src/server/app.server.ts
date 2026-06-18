@@ -269,39 +269,41 @@ export const startServer = (params: CliParams = {}) => {
   const watchMinutes = params?.certWatchIntervalMin ?? 0;
   const certPath = params?.cert;
   if (watchMinutes > 0 && certPath) {
-    let lastMtimeMs: number;
+    let lastMtimeMs: number | undefined;
     try {
       lastMtimeMs = fs.statSync(certPath).mtimeMs;
-    } catch (e: any) {
+    } catch {
       // The cert path was already validated by CertAuthStrategy.init() at
       // boot; a stat failure here is unusual. Log and skip the watcher
-      // rather than crashing.
+      // rather than returning early — fatal-error fallbacks below must still
+      // be registered regardless of watcher setup.
       process.stderr.write(`[cert-watch] cannot stat cert path at boot — watcher disabled\n`);
-      return;
     }
-    const intervalMs = watchMinutes * 60_000;
-    process.stderr.write(
-      `[cert-watch] watching cert mtime every ${watchMinutes} minute(s)\n`
-    );
-    const watchTimer = setInterval(async () => {
-      if (shuttingDown) return;
-      let currentMtimeMs: number;
-      try {
-        currentMtimeMs = fs.statSync(certPath).mtimeMs;
-      } catch (e: any) {
-        process.stderr.write(`[cert-watch] stat error: ${e?.message ?? e}\n`);
-        return;
-      }
-      if (currentMtimeMs !== lastMtimeMs) {
-        process.stderr.write(
-          `[cert-watch] cert mtime changed (was ${new Date(lastMtimeMs).toISOString()}, ` +
-          `now ${new Date(currentMtimeMs).toISOString()}) — reloading\n`
-        );
-        lastMtimeMs = currentMtimeMs;
-        await onSighup();
-      }
-    }, intervalMs);
-    watchTimer.unref();
+    if (lastMtimeMs !== undefined) {
+      const intervalMs = watchMinutes * 60_000;
+      process.stderr.write(
+        `[cert-watch] watching cert mtime every ${watchMinutes} minute(s)\n`
+      );
+      const watchTimer = setInterval(async () => {
+        if (shuttingDown) return;
+        let currentMtimeMs: number;
+        try {
+          currentMtimeMs = fs.statSync(certPath).mtimeMs;
+        } catch (e: any) {
+          process.stderr.write(`[cert-watch] stat error: ${e?.message ?? e}\n`);
+          return;
+        }
+        if (currentMtimeMs !== lastMtimeMs) {
+          process.stderr.write(
+            `[cert-watch] cert mtime changed (was ${new Date(lastMtimeMs!).toISOString()}, ` +
+            `now ${new Date(currentMtimeMs).toISOString()}) — reloading\n`
+          );
+          lastMtimeMs = currentMtimeMs;
+          await onSighup();
+        }
+      }, intervalMs);
+      watchTimer.unref();
+    }
   }
 
   // Fatal-error fallbacks. Node docs are explicit that the process is in an
