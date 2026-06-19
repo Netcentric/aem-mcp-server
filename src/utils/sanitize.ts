@@ -28,6 +28,20 @@ export function sanitizeErrorMessage(msg: string): string {
 }
 
 /**
+ * Collapse embedded CR/LF into single spaces so a string renders as one line.
+ * The MCP transport JSON.stringify's outgoing messages, which already escapes
+ * newlines inside JSON string values — so this is a readability + defense-in-
+ * depth measure, not required for wire framing. Worth applying anywhere an
+ * error message is interpolated into a plain text field (e.g.
+ * `` `Error: ${err.message}` ``) so logs and clients show a single clean line.
+ * Safe to call in HTTP mode too — it only touches CR/LF.
+ */
+export function sanitizeForWire(s: string): string {
+  if (!s) return s;
+  return s.replace(/\r\n|\r|\n/g, ' ');
+}
+
+/**
  * True when the given URL string carries embedded credentials (`user:pass@`).
  * Used at config-load time to reject misconfigured hosts before any fetch is
  * attempted.
@@ -84,8 +98,12 @@ export function summarizeAemBody(data: unknown, maxLen = 200): string | null {
     /* not JSON — fall through to plain-text handling */
   }
 
+  // Normalize C0 control chars (incl. TAB/CR/LF) to single spaces so the error
+  // summary renders as one readable line. The transport JSON.stringify's this
+  // value for the wire, so newlines are already escaped — this is readability +
+  // defense-in-depth, not required for JSON-RPC framing.
   // eslint-disable-next-line no-control-regex
-  const cleaned = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  const cleaned = str.replace(/[\x00-\x1F]/g, ' ');
   return truncate(cleaned, maxLen);
 }
 

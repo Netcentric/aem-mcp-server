@@ -1,13 +1,16 @@
 import fs from 'node:fs';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { handleRequest } from '../mcp/mcp.server-handler.js';
+import { createMCPServer } from '../mcp/mcp.server.js';
 // import { useBasicAuth } from './app.auth.js';
 import { AEMConnector } from '../aem/aem.connector.js';
 import { destroyAllCertStrategies, reloadAllCertStrategies } from '../aem/aem.auth.js';
 import { config } from '../config.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
+import { redactCliParams } from '../utils/sanitize.js';
 import { transports } from '../mcp/mcp.transports.js';
 
 // Cap on how long we wait for `destroyAllCertStrategies()` during shutdown
@@ -328,4 +331,65 @@ export const startServer = (params: CliParams = {}) => {
   };
   process.on('uncaughtException', (err) => fatal('uncaughtException', err));
   process.on('unhandledRejection', (reason) => fatal('unhandledRejection', reason));
+};
+
+/**
+ * Stdio transport entry point (feat: stdio mode). The sibling of startServer():
+ * it serves the SAME MCP tool surface over newline-delimited JSON-RPC on
+ * stdin/stdout instead of HTTP. Used by Claude Desktop, Cursor, and VS Code,
+ * which spawn the binary as a subprocess. No Express, no CORS, no Origin
+ * allowlist, no session map, NO port bound — cli.ts dispatches this XOR
+ * startServer(), never both.
+ *
+ * stdout is the JSON-RPC wire here, so it MUST stay byte-clean. Two layers of
+ * protection are installed BEFORE the transport connects:
+ *   1. LOGGER.useStderr() — our logger never writes to stdout.
+ *   2. console.log/info/debug → stderr — backstops stray stdout writes from
+ *      *dependencies*, the subtlest corruption vector. A single non-framed
+ *      byte on stdout makes the client reject the frame and drop the link.
+ */
+export const startStdioServer = async (params: CliParams = {}) => {
+  LOGGER.useStderr();
+  const toStderr = console.error.bind(console);
+  console.log = toStderr;
+  console.info = toStderr;
+  console.debug = toStderr;
+
+  LOGGER.log('Starting stdio MCP server with CLI params:', redactCliParams(params));
+
+  const server = createMCPServer(params);
+  const transport = new StdioServerTransport();
+
+  // Resolve when the connection closes OR when a signal requests shutdown.
+  // Use the Server's public `onclose` callback rather than transport.onclose —
+  // Protocol.connect() overwrites transport.onclose with its own internal
+  // cleanup handler, but invokes server.onclose afterwards.
+  // resolveClose! — the Promise executor runs synchronously so it is always
+  // assigned before any async code can reference it.
+  let resolveClose!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    resolveClose = resolve;
+    server.onclose = resolve;
+  });
+
+  const shutdown = (signal: string) => {
+    process.stderr.write(`[stdio] ${signal} received — closing\n`);
+    destroyAllCertStrategies();
+    resolveClose();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+
+  process.on('uncaughtException', (err) => {
+    process.stderr.write(`[stdio] uncaughtException: ${err.stack ?? err.message}\n`);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.stack : String(reason);
+    process.stderr.write(`[stdio] unhandledRejection: ${msg}\n`);
+    process.exit(1);
+  });
+
+  await server.connect(transport);
+  await closed;
 };

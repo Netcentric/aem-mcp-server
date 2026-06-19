@@ -2,7 +2,7 @@
 
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { startServer } from './index.js';
+import { startServer, startStdioServer } from './index.js';
 import { CliParams } from './types';
 import { hasUrlCredentials } from './utils/sanitize.js';
 import { CertParamsSchema } from './aem/aem.auth.schemas.js';
@@ -36,6 +36,12 @@ const argv: CliArgs = yargs(hideBin(process.argv)).options({
     default: Number(process.env.AEM_CERT_WATCH_INTERVAL_MIN) || 0,
     describe: 'periodically check the cert file mtime every N minutes; on change, reload PEMs and rebuild the undici.Agent (rotation without restart). 0 disables (default). SIGHUP still works regardless. Env: AEM_CERT_WATCH_INTERVAL_MIN.',
   },
+  stdio: {
+    type: 'boolean',
+    default: false,
+    alias: 'e',
+    describe: 'run as a stdio MCP subprocess (JSON-RPC over stdin/stdout) instead of the HTTP server. Mutually exclusive with the HTTP mode — no port is bound. For Claude Desktop / Cursor / VS Code.',
+  },
   mcpPort: { type: 'number', default: 8502, alias: 'm' },
   bind: {
     type: 'string',
@@ -62,7 +68,7 @@ if (argv.help) {
   process.exit(0); // prevent startServer from running
 }
 
-const { host, user, pass, mcpPort, id, secret, bind } = argv;
+const { host, user, pass, mcpPort, id, secret, bind, stdio } = argv;
 const allowOrigin = argv.allowOrigin ?? [];
 const shutdownDrainSeconds = argv.shutdownDrainSeconds ?? 60;
 
@@ -98,7 +104,7 @@ const { cert, key, ca, passphrase } = certValidation.data;
 
 const certWatchIntervalMin = argv.certWatchIntervalMin ?? 0;
 
-startServer({
+const params = {
   host,
   user,
   pass,
@@ -113,4 +119,18 @@ startServer({
   allowOrigin,
   bind,
   shutdownDrainSeconds,
-});
+  stdio,
+};
+
+// Strict XOR: stdio mode and the HTTP server are mutually exclusive. Running
+// both would leave an unauthenticated HTTP endpoint bound on mcpPort alongside
+// the stdio subprocess — double the attack surface. In stdio mode no port is
+// ever bound.
+if (stdio) {
+  startStdioServer(params).catch((err) => {
+    process.stderr.write(`[stdio] fatal: ${err?.message ?? err}\n`);
+    process.exit(1);
+  });
+} else {
+  startServer(params);
+}
