@@ -246,9 +246,7 @@ export const startServer = (params: CliParams = {}) => {
   // CertAuthStrategy: re-read PEMs, atomic Agent swap, 30s drain on the old
   // Agent. Stderr-only (unconditional) so SREs see the transition without
   // needing MCP_LOGGER. No-op when no cert-mode strategy is active.
-  const onSighup = async () => {
-    if (shuttingDown) return;
-    process.stderr.write('[cert-reload] SIGHUP received — reloading cert-auth strategies\n');
+  const doReloadCerts = async () => {
     try {
       const { reloaded, errors } = await reloadAllCertStrategies();
       if (reloaded === 0 && errors.length === 0) {
@@ -263,6 +261,11 @@ export const startServer = (params: CliParams = {}) => {
       process.stderr.write(`[cert-reload] fatal error: ${e?.message ?? e}\n`);
     }
   };
+  const onSighup = async () => {
+    if (shuttingDown) return;
+    process.stderr.write('[cert-reload] SIGHUP received — reloading cert-auth strategies\n');
+    await doReloadCerts();
+  };
   process.on('SIGHUP', () => { void onSighup(); });
 
   // Optional mtime polling. When --cert-watch-interval-min N is non-zero AND
@@ -271,6 +274,11 @@ export const startServer = (params: CliParams = {}) => {
   // alone doesn't keep the process alive on shutdown.
   const watchMinutes = params?.certWatchIntervalMin ?? 0;
   const certPath = params?.cert;
+  if (watchMinutes > 0 && !certPath) {
+    process.stderr.write(
+      '[cert-watch] certWatchIntervalMin is set but no cert path was supplied — watcher disabled\n'
+    );
+  }
   if (watchMinutes > 0 && certPath) {
     let lastMtimeMs: number | undefined;
     try {
@@ -299,10 +307,10 @@ export const startServer = (params: CliParams = {}) => {
         if (currentMtimeMs !== lastMtimeMs) {
           process.stderr.write(
             `[cert-watch] cert mtime changed (was ${new Date(lastMtimeMs!).toISOString()}, ` +
-            `now ${new Date(currentMtimeMs).toISOString()}) — reloading\n`
+            `now ${new Date(currentMtimeMs).toISOString()}) — reloading cert-auth strategies\n`
           );
           lastMtimeMs = currentMtimeMs;
-          await onSighup();
+          await doReloadCerts();
         }
       }, intervalMs);
       watchTimer.unref();
