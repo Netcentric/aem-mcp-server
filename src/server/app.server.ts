@@ -394,6 +394,7 @@ export const startStdioServer = async (params: CliParams = {}) => {
     process.stderr.write(`[stdio] ${signal} received — closing\n`);
     destroyAllCertStrategies();
     resolveClose();
+    process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
