@@ -394,7 +394,12 @@ export const startStdioServer = async (params: CliParams = {}) => {
     process.stderr.write(`[stdio] ${signal} received — closing\n`);
     destroyAllCertStrategies();
     resolveClose();
-    process.exit(0);
+    // Give in-flight tool calls a 5s window to finish before forcing exit.
+    // process.exit(0) is still required: attaching a SIGINT listener suppresses
+    // Node's default termination, so without it the stdin stream keeps the
+    // event loop alive indefinitely. unref() so the timer itself never blocks exit
+    // if everything drains faster than 5s.
+    setTimeout(() => process.exit(0), 5_000).unref();
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
