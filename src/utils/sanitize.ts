@@ -111,6 +111,51 @@ function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen) + '…' : s;
 }
 
+// Tool-argument keys whose values are secrets and must never reach an audit
+// line. Substring (not anchored) so compound names like `clientSecret`,
+// `accessToken`, `apiKey`, `privateKey`, `passphrase` are caught — the anchored
+// form missed every one of those. Bare `auth` is intentionally NOT a token: it
+// would redact the very common AEM `author`/authoring properties and gut the
+// audit trail; the `authorization` header form is matched explicitly instead.
+const SENSITIVE_ARG_KEY = /pass|secret|token|authorization|credential|api[_-]?key|private[_-]?key/i;
+
+// Cap recursion so a pathologically deep client payload can't overflow the
+// stack; subtrees past the cap render as a placeholder (never the raw value,
+// which could hide an un-redacted secret at that depth).
+const MAX_REDACT_DEPTH = 8;
+
+function redactDeep(value: unknown, depth: number): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= MAX_REDACT_DEPTH) return '[deep]';
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = SENSITIVE_ARG_KEY.test(k) ? '***' : redactDeep(v, depth + 1);
+  }
+  return out;
+}
+
+/**
+ * Render a tool call's arguments as a single safe line for the stderr audit
+ * trail (feat: stdio, B3). Values under credential-like keys collapse to `***`
+ * **at any depth** (AEM tools take arbitrary nested `properties` objects, so a
+ * top-level-only pass would leak nested secrets). The result is JSON, has CR/LF
+ * flattened (`sanitizeForWire`), any URL userinfo stripped
+ * (`sanitizeErrorMessage`), and is length-capped so a large `properties`
+ * payload can't flood the log. Never throws — an unserializable arg object
+ * degrades to a placeholder.
+ */
+export function redactToolArgs(args: unknown, maxLen = 300): string {
+  if (args == null || typeof args !== 'object') return '{}';
+  let json: string;
+  try {
+    json = JSON.stringify(redactDeep(args, 0));
+  } catch {
+    return '<unserializable-args>';
+  }
+  return truncate(sanitizeForWire(sanitizeErrorMessage(json)), maxLen);
+}
+
 export type RedactedCliParams = {
   host: string;
   authMode: 'cert' | 'basic' | 'oauth' | 'none';

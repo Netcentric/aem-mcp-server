@@ -6,7 +6,17 @@ import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
 import { sanitizeForWire } from '../utils/sanitize.js';
 
-export const createMCPServer = (cliParams: CliParams) => {
+/**
+ * Optional transport-level hooks. Kept transport-agnostic so stdio-specific
+ * behaviour stays out of this file (leakage rule): startStdioServer() supplies
+ * an `onToolCall` that writes the stderr audit line (feat: stdio, B3); the HTTP
+ * path passes nothing.
+ */
+export type MCPServerHooks = {
+  onToolCall?: (name: string, args: Record<string, unknown> | undefined) => void;
+};
+
+export const createMCPServer = (cliParams: CliParams, hooks: MCPServerHooks = {}) => {
   const mcpHandler = new MCPRequestHandler(cliParams);
 
   const serverInfo = {
@@ -43,6 +53,9 @@ export const createMCPServer = (cliParams: CliParams) => {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    // Audit hook fires for every CallTool attempt (incl. ones rejected below
+    // for missing args) so the trail records intent, not just successes.
+    hooks.onToolCall?.(name, args);
     LOGGER.log('3. Received CallToolRequestSchema', request.params);
     if (!args) {
       return {

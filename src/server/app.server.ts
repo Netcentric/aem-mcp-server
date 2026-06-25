@@ -10,7 +10,7 @@ import { destroyAllCertStrategies, reloadAllCertStrategies } from '../aem/aem.au
 import { config } from '../config.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
-import { redactCliParams } from '../utils/sanitize.js';
+import { redactCliParams, redactToolArgs } from '../utils/sanitize.js';
 import { transports } from '../mcp/mcp.transports.js';
 
 // Cap on how long we wait for `destroyAllCertStrategies()` during shutdown
@@ -365,7 +365,17 @@ export const startStdioServer = async (params: CliParams = {}) => {
 
   LOGGER.log('Starting stdio MCP server with CLI params:', redactCliParams(params));
 
-  const server = createMCPServer(params);
+  // stderr audit trail (feat: stdio, B3). One sanitized line per tool call.
+  // Claude Desktop persists a subprocess's stderr to mcp-server-*.log, giving
+  // a tamper-resistant record of what was invoked with zero client cooperation.
+  // stderr only — no MCP notifications (the client can silence those).
+  const server = createMCPServer(params, {
+    onToolCall: (name, args) => {
+      process.stderr.write(
+        `[stdio] tool_call: ${name} ${redactToolArgs(args)} ${new Date().toISOString()}\n`
+      );
+    },
+  });
   const transport = new StdioServerTransport();
 
   // Resolve when the connection closes OR when a signal requests shutdown.
