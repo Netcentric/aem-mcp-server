@@ -133,6 +133,7 @@ bundle (`--ca` or the OS trust store).
 | Variable | Purpose |
 |---|---|
 | `MCP_LOGGER` | Set to `true` to enable diagnostic logging on stdout (off by default — required off for MCP stdio clients). |
+| `AEM_USER` / `AEM_PASS` | Basic-auth credentials for AEM. Precedence is **flag > env > default** (`-u`/`-p` win when given; `admin` is the fallback). Preferred for stdio clients — supply them via the client's `env` config block (not `args[]`, which shows in `ps aux`) and omit `-u`/`-p`. |
 | `MCP_USERNAME` / `MCP_PASSWORD` | Optional HTTP Basic auth gate on `POST /mcp` (only active when both are set). |
 | `MCP_BIND` | Default bind interface (overrides built-in `127.0.0.1`). CLI `--bind` takes precedence. |
 | `MCP_ALLOWED_ORIGINS` | Comma-separated extra `Origin` values allowed on `/mcp`. Inspector ports 6274/6277 on `localhost`/`127.0.0.1` are always allowed. |
@@ -216,6 +217,62 @@ Sample for AI-based code editors or custom clients:
   }
 }
 ```
+
+### Stdio mode (Claude Desktop, Cursor, VS Code)
+
+Local clients that spawn the server as a subprocess speak JSON-RPC over
+stdin/stdout. Run with `--stdio` (alias `-e`) — **no HTTP port is bound** in
+this mode. Pass credentials through the client's **`env` block, never
+`args[]`** (args are visible in `ps aux`; env is readable only by the process
+owner), and omit `-u`/`-p` so the env credentials are used (precedence is
+flag > env > default).
+
+**Claude Desktop** (`claude_desktop_config.json`) and **Cursor**
+(`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "AEM": {
+      "command": "npx",
+      "args": ["-y", "@netcentric/aem-mcp-server", "--stdio", "-H=https://author.example.com"],
+      "env": {
+        "AEM_USER": "your-user",
+        "AEM_PASS": "your-pass"
+      }
+    }
+  }
+}
+```
+
+**VS Code** (`.vscode/mcp.json`) uses a `servers` key and an explicit
+`"type": "stdio"`:
+
+```json
+{
+  "servers": {
+    "AEM": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@netcentric/aem-mcp-server", "--stdio", "-H=https://author.example.com"],
+      "env": {
+        "AEM_USER": "your-user",
+        "AEM_PASS": "your-pass"
+      }
+    }
+  }
+}
+```
+
+> **mTLS / OAuth in stdio mode** — swap the `env` block for
+> `AEM_CERT_PATH`/`AEM_KEY_PATH` (+ `AEM_KEY_PASSPHRASE` if encrypted) or pass
+> `-i`/`-s` for OAuth, exactly as in HTTP mode.
+>
+> **Trust boundary** — stdio has no CORS/Origin/session-auth layer: any local
+> process that can write the subprocess's stdin gets the full tool surface
+> (incl. page delete and replication). This is an accepted trade-off of the
+> OS-process-isolation model — the client owns the child process. Do not
+> expose the stdin of this process to untrusted input.
 
 ## Usage
 

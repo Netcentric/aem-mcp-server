@@ -1,3 +1,3 @@
-import { startServer } from './server/app.server.js';
+import { startServer, startStdioServer } from './server/app.server.js';
 
-export { startServer };
+export { startServer, startStdioServer };

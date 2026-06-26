@@ -134,7 +134,7 @@ export class BasicAuthStrategy implements AuthStrategy {
    * (é/ü/ñ/etc.) round-trip correctly. Passwords with code points > 0xFF still
    * can't be expressed in Basic auth and are out of scope.
    */
-  readonly encodedToken: string;
+  private readonly encodedToken: string;
 
   constructor(username: string, password: string) {
     if (!username || !password) {

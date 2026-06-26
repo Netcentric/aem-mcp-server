@@ -2,10 +2,11 @@
 
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { startServer } from './index.js';
+import { startServer, startStdioServer } from './index.js';
 import { CliParams } from './types';
-import { hasUrlCredentials } from './utils/sanitize.js';
+import { hasUrlCredentials, sanitizeErrorMessage } from './utils/sanitize.js';
 import { CertParamsSchema } from './aem/aem.auth.schemas.js';
+import { CliParamsSchema } from './cli.schemas.js';
 
 type CliArgs = CliParams & {
   help?: boolean;
@@ -13,8 +14,11 @@ type CliArgs = CliParams & {
 
 const argv: CliArgs = yargs(hideBin(process.argv)).options({
   host: { type: 'string', default: 'http://localhost:4502', alias: 'H' },
-  user: { type: 'string', default: 'admin', alias: 'u' },
-  pass: { type: 'string', default: 'admin', alias: 'p' },
+  // No yargs `default` for user/pass: we need to tell "flag explicitly passed"
+  // apart from "flag absent" so env vars can fill the gap. The 'admin' fallback
+  // is applied at resolution (flag > env > default). See AEM_USER/AEM_PASS below.
+  user: { type: 'string', alias: 'u', describe: 'AEM Basic-auth user. Flag wins over AEM_USER env. Default: admin.' },
+  pass: { type: 'string', alias: 'p', describe: 'AEM Basic-auth password. Flag wins over AEM_PASS env. Default: admin.' },
   id: { type: 'string', default: '', alias: 'i', describe: 'clientId' },
   secret: { type: 'string', default: '', alias: 's', describe: 'clientSecret' },
   cert: {
@@ -35,6 +39,12 @@ const argv: CliArgs = yargs(hideBin(process.argv)).options({
     type: 'number',
     default: Number(process.env.AEM_CERT_WATCH_INTERVAL_MIN) || 0,
     describe: 'periodically check the cert file mtime every N minutes; on change, reload PEMs and rebuild the undici.Agent (rotation without restart). 0 disables (default). SIGHUP still works regardless. Env: AEM_CERT_WATCH_INTERVAL_MIN.',
+  },
+  stdio: {
+    type: 'boolean',
+    default: false,
+    alias: 'e',
+    describe: 'run as a stdio MCP subprocess (JSON-RPC over stdin/stdout) instead of the HTTP server. Mutually exclusive with the HTTP mode — no port is bound. For Claude Desktop / Cursor / VS Code.',
   },
   mcpPort: { type: 'number', default: 8502, alias: 'm' },
   bind: {
@@ -62,12 +72,34 @@ if (argv.help) {
   process.exit(0); // prevent startServer from running
 }
 
-const { host, user, pass, mcpPort, id, secret, bind } = argv;
+const { host, mcpPort, id, secret, bind, stdio } = argv;
 const allowOrigin = argv.allowOrigin ?? [];
 const shutdownDrainSeconds = argv.shutdownDrainSeconds ?? 60;
 
+// Basic-auth credentials follow standard precedence: flag > env > default
+// (feat: stdio, B4). Matches the cert-path rule and POSIX/12-factor convention
+// — an explicit flag always wins, env fills the gap, 'admin' is the local-dev
+// fallback. Subprocess MCP clients (Claude Desktop / Cursor / VS Code) should
+// supply secrets via their `env` block (AEM_USER/AEM_PASS): more private than
+// `args[]`, which is visible in `ps aux`.
+const user = argv.user ?? process.env.AEM_USER ?? 'admin';
+const pass = argv.pass ?? process.env.AEM_PASS ?? 'admin';
+
 if (host && hasUrlCredentials(host)) {
   console.error('Error: --host (-H) must not contain embedded credentials. Pass them via -u/-p (Basic) or -i/-s (OAuth) instead.');
+  process.exit(1);
+}
+
+// URL-shape + transport-flag validation (feat: stdio, B2). Runs after the
+// credentials-in-host guard so an embedded-cred host gets the specific message
+// above rather than a generic URL error. Sanitize the issue message before it
+// reaches stderr — defense-in-depth against a future value-bearing zod issue.
+const cliValidation = CliParamsSchema.safeParse({ stdio, host });
+if (!cliValidation.success) {
+  const issue = cliValidation.error.issues[0];
+  const pathSeg = issue?.path?.[0];
+  const label = typeof pathSeg === 'string' && pathSeg.length > 0 ? `--${pathSeg}` : 'cli';
+  console.error(`Error: ${label}: ${sanitizeErrorMessage(issue?.message ?? 'validation failed')}`);
   process.exit(1);
 }
 
@@ -98,7 +130,7 @@ const { cert, key, ca, passphrase } = certValidation.data;
 
 const certWatchIntervalMin = argv.certWatchIntervalMin ?? 0;
 
-startServer({
+const params = {
   host,
   user,
   pass,
@@ -113,4 +145,18 @@ startServer({
   allowOrigin,
   bind,
   shutdownDrainSeconds,
-});
+  stdio,
+};
+
+// Strict XOR: stdio mode and the HTTP server are mutually exclusive. Running
+// both would leave an unauthenticated HTTP endpoint bound on mcpPort alongside
+// the stdio subprocess — double the attack surface. In stdio mode no port is
+// ever bound.
+if (stdio) {
+  startStdioServer(params).catch((err) => {
+    process.stderr.write(`[stdio] fatal: ${err?.message ?? err}\n`);
+    process.exit(1);
+  });
+} else {
+  startServer(params);
+}

@@ -4,8 +4,19 @@ import { tools } from './mcp.tools.js';
 import { MCPRequestHandler } from './mcp.aem-handler.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
+import { sanitizeForWire } from '../utils/sanitize.js';
 
-export const createMCPServer = (cliParams: CliParams) => {
+/**
+ * Optional transport-level hooks. Kept transport-agnostic so stdio-specific
+ * behaviour stays out of this file (leakage rule): startStdioServer() supplies
+ * an `onToolCall` that writes the stderr audit line (feat: stdio, B3); the HTTP
+ * path passes nothing.
+ */
+export type MCPServerHooks = {
+  onToolCall?: (name: string, args: Record<string, unknown> | undefined) => void;
+};
+
+export const createMCPServer = (cliParams: CliParams, hooks: MCPServerHooks = {}) => {
   const mcpHandler = new MCPRequestHandler(cliParams);
 
   const serverInfo = {
@@ -42,6 +53,9 @@ export const createMCPServer = (cliParams: CliParams) => {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    // Audit hook fires for every CallTool attempt (incl. ones rejected below
+    // for missing args) so the trail records intent, not just successes.
+    hooks.onToolCall?.(name, args);
     LOGGER.log('3. Received CallToolRequestSchema', request.params);
     if (!args) {
       return {
@@ -76,7 +90,7 @@ export const createMCPServer = (cliParams: CliParams) => {
       
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: any) {
-      LOGGER.error('ERROR CallToolRequestSchema', error.message);
+      LOGGER.error('ERROR CallToolRequestSchema', error instanceof Error ? error.message : String(error));
       
       // Check if it's an OAuth error
       if (error.code === 'OAUTH_REQUIRED' && error.authUrl) {
@@ -97,8 +111,12 @@ export const createMCPServer = (cliParams: CliParams) => {
         };
       }
       
+      // sanitizeForWire: collapse CR/LF so a multi-line AEM error renders as a
+      // single readable line. The transport JSON.stringify's this response, so
+      // newlines are already escaped for the wire — this is readability +
+      // defense-in-depth, not required for JSON-RPC framing.
       return {
-        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        content: [{ type: 'text', text: sanitizeForWire(`Error: ${error instanceof Error ? error.message : String(error)}`) }],
         isError: true,
       };
     }

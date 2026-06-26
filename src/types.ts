@@ -13,4 +13,5 @@ export type CliParams = {
   allowOrigin?: string[];
   bind?: string;
   shutdownDrainSeconds?: number;
+  stdio?: boolean;
 };

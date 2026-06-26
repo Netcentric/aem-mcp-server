@@ -2546,7 +2546,7 @@ export class AEMConnector {
    */
   async getAvailableTemplates(parentPath: string): Promise<object> {
     return safeExecute<object>(async () => {
-      console.log('getAvailableTemplates for parentPath:', parentPath);
+      LOGGER.log('getAvailableTemplates for parentPath:', parentPath);
       // Try to determine site configuration from parent path
       let confPath = '/conf';
       const pathParts = parentPath.split('/');
@@ -3224,7 +3224,7 @@ export class AEMConnector {
   clearTemplateCache(): void {
     this.templateCache.clear();
     this.templateCacheExpiry.clear();
-    console.log('🗑️ Template cache cleared');
+    LOGGER.log('🗑️ Template cache cleared');
   }
 
   /**
