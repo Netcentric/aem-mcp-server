@@ -284,6 +284,8 @@ export const startServer = (params: CliParams = {}) => {
       process.stderr.write(
         `[cert-watch] watching cert mtime every ${watchMinutes} minute(s)\n`
       );
+      // NOTE: only cert mtime is watched. Key and CA file changes are not
+      // detected by this poller — use SIGHUP to force reload when rotating key or CA.
       const watchTimer = setInterval(async () => {
         if (shuttingDown) return;
         let currentMtimeMs: number;

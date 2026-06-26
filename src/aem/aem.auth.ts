@@ -284,6 +284,10 @@ export class CertAuthStrategy implements AuthStrategy {
   // a second time just to fingerprint it. Public-readable for tests; the
   // value is non-sensitive (a public-key hash) so leakage is harmless.
   certFingerprint: string = '';
+  // Drain timer for the previous Agent after reload(). Stored on the instance
+  // so rapid successive reloads can cancel the previous timer before setting a
+  // new one — prevents the first timer from firing on the now-live agent.
+  private drainTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly params: CertAuthParams;
 
   constructor(params: CertAuthParams) {
@@ -314,11 +318,12 @@ export class CertAuthStrategy implements AuthStrategy {
 
   /**
    * One-time setup: read + validate PEM files, build the singleton Agent.
-   * Safe to call only once per instance — repeated calls will rebuild the
-   * Agent and orphan the previous socket pool. The rotation path (feat #7)
+   * Safe to call only once per instance — repeated calls throw to prevent
+   * silently orphaning the previous socket pool. The rotation path (feat #7)
    * uses an explicit `reload()` with an atomic swap + 30s drain.
    */
   async init(): Promise<void> {
+    if (this.cachedAgent) throw new Error('CertAuthStrategy.init() already called — use reload() to rotate');
     const { certPath, keyPath, caPath, passphrase } = this.params;
 
     const cert = this.readAndGuardPem(certPath, 'cert');
@@ -427,14 +432,18 @@ export class CertAuthStrategy implements AuthStrategy {
       `[cert-reload] strategy reloaded: SHA256(old)=${shortHash(oldFingerprint)} → SHA256(new)=${shortHash(newFingerprint)}\n`
     );
 
-    // Step 8: schedule old-Agent destroy after drain window. unref() so the
-    // timer alone doesn't keep the process alive on shutdown — if SIGINT
-    // fires within the 30s window, the drain path (feat #6) will destroy
-    // the new Agent and the OS will reclaim the old one's sockets.
-    const t = setTimeout(() => {
+    // Step 8: schedule old-Agent destroy after drain window. Cancel any
+    // previous drain timer first — if reload() is called again within the
+    // 30s window, the first timer must not fire on the now-live agent.
+    // unref() so the timer alone doesn't keep the process alive on shutdown.
+    if (this.drainTimer !== undefined) {
+      clearTimeout(this.drainTimer);
+    }
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = undefined;
       oldAgent.destroy().catch(() => { /* best effort */ });
     }, RELOAD_OLD_AGENT_DRAIN_MS);
-    t.unref();
+    this.drainTimer.unref();
 
     return { oldFingerprint, newFingerprint };
   }
@@ -582,9 +591,8 @@ export async function reloadAllCertStrategies(): Promise<{ reloaded: number; err
 export function createAuthStrategy(input: AuthFactoryInput): AuthStrategy {
   if (input.certPath && input.keyPath) {
     if (input.clientId || input.clientSecret) {
-      LOGGER.warn(
-        'Both cert-auth (--cert/--key) and OAuth (--id/--secret) credentials supplied. ' +
-        'Cert-auth takes priority; OAuth params will be ignored.'
+      process.stderr.write(
+        '[auth] WARNING: both cert and OAuth params supplied — cert takes precedence; OAuth params ignored\n'
       );
     }
     return new CertAuthStrategy({
