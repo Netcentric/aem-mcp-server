@@ -1,7 +1,8 @@
 import { AEMConfig, getAEMConfig, isValidContentPath, isValidLocale } from './aem.config.js';
 import { AEM_ERROR_CODES, createAEMError, createSuccessResponse, handleAEMHttpError, safeExecute } from './aem.errors.js';
 import { CliParams } from '../types.js';
-import { AEMAuth, AEMFetch } from './aem.fetch.js';
+import { AEMFetch } from './aem.fetch.js';
+import { AuthStrategy, OAuthStrategy, createAuthStrategy } from './aem.auth.js';
 import { LOGGER } from '../utils/logger.js';
 import { exec } from 'child_process';
 
@@ -10,7 +11,7 @@ export interface AEMConnectorConfig {
     host: string;
     author: string;
     publish: string;
-    auth: AEMAuth;
+    authStrategy: AuthStrategy;
     endpoints: Record<string, string>;
   };
   mcp: {
@@ -42,7 +43,7 @@ export class AEMConnector {
     this.isAEMaaCS = this.isConfigAEMaaCS();
     this.fetch = new AEMFetch({
       host: this.config.aem.host,
-      auth: this.config.aem.auth,
+      authStrategy: this.config.aem.authStrategy,
       timeout: this.aemConfig.queries.timeoutMs,
     });
   }
@@ -57,33 +58,30 @@ export class AEMConnector {
   }
 
   isConfigAEMaaCS(): boolean {
-    return Boolean(this.config.aem.auth.clientId && this.config.aem.auth.clientSecret);
+    return this.config.aem.authStrategy instanceof OAuthStrategy;
   }
 
   loadConfig(params: CliParams = {}): AEMConnectorConfig {
-    let auth: AEMAuth;
-    
-    // OAuth Server-to-Server (client credentials)
-    if (params.id && params.secret) {
-      auth = {
-        clientId: params.id,
-        clientSecret: params.secret,
-      };
-    } 
-    // Basic Authentication
-    else {
-      auth = {
-        username: params.user || 'admin',
-        password: params.pass || 'admin',
-      };
-    }
-    
+    // Auth-strategy factory chain (feat #5): cert+key > OAuth > Basic.
+    // Pass all credential candidates; the factory selects and logs a conflict
+    // warning if cert and OAuth params are both supplied.
+    const authStrategy: AuthStrategy = createAuthStrategy({
+      username: params.user || 'admin',
+      password: params.pass || 'admin',
+      clientId: params.id || undefined,
+      clientSecret: params.secret || undefined,
+      certPath: params.cert,
+      keyPath: params.key,
+      caPath: params.ca,
+      passphrase: params.passphrase,
+    });
+
     return {
       aem: {
         host: params.host || 'http://localhost:4502',
         author: params.host || 'http://localhost:4502',
         publish: 'http://localhost:4503',
-        auth,
+        authStrategy,
         endpoints: {
           content: '/content',
           dam: '/content/dam',

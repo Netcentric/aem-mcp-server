@@ -1,12 +1,21 @@
+import fs from 'node:fs';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { handleRequest } from '../mcp/mcp.server-handler.js';
 // import { useBasicAuth } from './app.auth.js';
 import { AEMConnector } from '../aem/aem.connector.js';
+import { destroyAllCertStrategies, reloadAllCertStrategies } from '../aem/aem.auth.js';
 import { config } from '../config.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
 import { transports } from '../mcp/mcp.transports.js';
+
+// Cap on how long we wait for `destroyAllCertStrategies()` during shutdown
+// (feat #6). The undici Agent's `destroy()` is normally near-instant — it
+// just closes the keep-alive socket pool — but a stuck socket or hostile
+// peer could otherwise hang the process past the drain deadline. 5s is plenty
+// for real shutdowns and short enough to keep `kill -INT` responsive.
+const CERT_DESTROY_TIMEOUT_MS = 5_000;
 
 // MCP spec MUST: validate Origin header to prevent DNS-rebinding attacks.
 // Defaults cover the official MCP Inspector (UI :6274, proxy :6277) on both
@@ -172,11 +181,35 @@ export const startServer = (params: CliParams = {}) => {
     // resolves and the process is otherwise idle, exit cleanly.
     forceExit.unref();
 
-    server.close((err) => {
+    server.close(async (err) => {
       clearTimeout(forceExit);
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
       if (err) {
         process.stderr.write(`[shutdown] server.close error: ${err.message}\n`);
+      }
+      // Cert-mode hook (feat #6): release any cached undici.Agent keep-alive
+      // socket pools so they don't linger past process.exit. No-op when the
+      // active strategies are Basic/OAuth (registry empty → count 0). Bounded
+      // by CERT_DESTROY_TIMEOUT_MS so a stuck Agent can't hang the process.
+      try {
+        const destroyed = await Promise.race<number>([
+          destroyAllCertStrategies(),
+          new Promise<number>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`cert destroy timeout (${CERT_DESTROY_TIMEOUT_MS}ms)`)),
+              CERT_DESTROY_TIMEOUT_MS
+            )
+          ),
+        ]);
+        if (destroyed > 0) {
+          process.stderr.write(
+            `[shutdown] destroyed ${destroyed} cert-auth agent pool(s)\n`
+          );
+        }
+      } catch (e: any) {
+        process.stderr.write(
+          `[shutdown] cert-auth destroy error: ${e?.message ?? e}\n`
+        );
       }
       process.stderr.write(`[shutdown] drain complete in ${elapsed}s — exit 0\n`);
       process.exit(0);
@@ -205,6 +238,75 @@ export const startServer = (params: CliParams = {}) => {
 
   process.on('SIGINT', () => drain('SIGINT'));
   process.on('SIGTERM', () => drain('SIGTERM'));
+
+  // Cert rotation hook (feat #7). SIGHUP triggers a reload of every live
+  // CertAuthStrategy: re-read PEMs, atomic Agent swap, 30s drain on the old
+  // Agent. Stderr-only (unconditional) so SREs see the transition without
+  // needing MCP_LOGGER. No-op when no cert-mode strategy is active.
+  const onSighup = async () => {
+    if (shuttingDown) return;
+    process.stderr.write('[cert-reload] SIGHUP received — reloading cert-auth strategies\n');
+    try {
+      const { reloaded, errors } = await reloadAllCertStrategies();
+      if (reloaded === 0 && errors.length === 0) {
+        process.stderr.write('[cert-reload] no cert-auth strategies live; nothing to reload\n');
+      } else if (reloaded > 0) {
+        process.stderr.write(`[cert-reload] reloaded ${reloaded} cert-auth strategy(ies)\n`);
+      }
+      for (const err of errors) {
+        process.stderr.write(`[cert-reload] error: ${err}\n`);
+      }
+    } catch (e: any) {
+      process.stderr.write(`[cert-reload] fatal error: ${e?.message ?? e}\n`);
+    }
+  };
+  process.on('SIGHUP', () => { void onSighup(); });
+
+  // Optional mtime polling. When --cert-watch-interval-min N is non-zero AND
+  // a cert path was supplied, poll cert mtime every N minutes; on change,
+  // trigger the same reload flow as SIGHUP. setInterval.unref() so the timer
+  // alone doesn't keep the process alive on shutdown.
+  const watchMinutes = params?.certWatchIntervalMin ?? 0;
+  const certPath = params?.cert;
+  if (watchMinutes > 0 && certPath) {
+    let lastMtimeMs: number | undefined;
+    try {
+      lastMtimeMs = fs.statSync(certPath).mtimeMs;
+    } catch {
+      // The cert path was already validated by CertAuthStrategy.init() at
+      // boot; a stat failure here is unusual. Log and skip the watcher
+      // rather than returning early — fatal-error fallbacks below must still
+      // be registered regardless of watcher setup.
+      process.stderr.write(`[cert-watch] cannot stat cert path at boot — watcher disabled\n`);
+    }
+    if (lastMtimeMs !== undefined) {
+      const intervalMs = watchMinutes * 60_000;
+      process.stderr.write(
+        `[cert-watch] watching cert mtime every ${watchMinutes} minute(s)\n`
+      );
+      // NOTE: only cert mtime is watched. Key and CA file changes are not
+      // detected by this poller — use SIGHUP to force reload when rotating key or CA.
+      const watchTimer = setInterval(async () => {
+        if (shuttingDown) return;
+        let currentMtimeMs: number;
+        try {
+          currentMtimeMs = fs.statSync(certPath).mtimeMs;
+        } catch (e: any) {
+          process.stderr.write(`[cert-watch] stat error: ${e?.message ?? e}\n`);
+          return;
+        }
+        if (currentMtimeMs !== lastMtimeMs) {
+          process.stderr.write(
+            `[cert-watch] cert mtime changed (was ${new Date(lastMtimeMs!).toISOString()}, ` +
+            `now ${new Date(currentMtimeMs).toISOString()}) — reloading\n`
+          );
+          lastMtimeMs = currentMtimeMs;
+          await onSighup();
+        }
+      }, intervalMs);
+      watchTimer.unref();
+    }
+  }
 
   // Fatal-error fallbacks. Node docs are explicit that the process is in an
   // undefined state after `uncaughtException` — we MUST NOT try to resume

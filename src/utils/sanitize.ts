@@ -95,18 +95,23 @@ function truncate(s: string, maxLen: number): string {
 
 export type RedactedCliParams = {
   host: string;
-  authMode: 'basic' | 'oauth' | 'none';
+  authMode: 'cert' | 'basic' | 'oauth' | 'none';
   mcpPort?: number;
   hasUser: boolean;
   hasPass: boolean;
   hasId: boolean;
   hasSecret: boolean;
+  hasCert: boolean;
+  hasKey: boolean;
+  hasCa: boolean;
+  hasPassphrase: boolean;
 };
 
 /**
  * Render `CliParams` in a form safe to log. Strips userinfo from `host`,
  * collapses credential presence to booleans, and surfaces the auth mode
- * without echoing any secret value.
+ * without echoing any secret value. Selection order matches
+ * `createAuthStrategy` (feat #5): cert+key > id+secret > user+pass.
  */
 export function redactCliParams(p: {
   host?: string;
@@ -114,14 +119,25 @@ export function redactCliParams(p: {
   pass?: string;
   id?: string;
   secret?: string;
+  cert?: string;
+  key?: string;
+  ca?: string;
+  passphrase?: string;
   mcpPort?: number;
 }): RedactedCliParams {
   const hasUser = !!p.user;
   const hasPass = !!p.pass;
   const hasId = !!p.id;
   const hasSecret = !!p.secret;
+  const hasCert = !!p.cert;
+  const hasKey = !!p.key;
+  const hasCa = !!p.ca;
+  const hasPassphrase = !!p.passphrase;
   const authMode: RedactedCliParams['authMode'] =
-    hasId && hasSecret ? 'oauth' : hasUser && hasPass ? 'basic' : 'none';
+    hasCert && hasKey ? 'cert'
+      : hasId && hasSecret ? 'oauth'
+      : hasUser && hasPass ? 'basic'
+      : 'none';
   return {
     host: p.host ? sanitizeUrl(p.host) : '<unset>',
     authMode,
@@ -130,5 +146,9 @@ export function redactCliParams(p: {
     hasPass,
     hasId,
     hasSecret,
+    hasCert,
+    hasKey,
+    hasCa,
+    hasPassphrase,
   };
 }
